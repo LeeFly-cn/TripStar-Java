@@ -31,7 +31,7 @@ public class AiTextService {
     /**
      * 统一封装 Spring AI Alibaba 文本生成调用。
      *
-     * <p>业务层只关心“有没有生成出文本”，失败原因在这里记录日志并返回 Optional.empty() 触发降级。
+     * <p>业务层只关心“有没有生成出文本”，失败原因在这里记录日志并返回 Optional.empty()。
      * 日志只记录长度和耗时，不打印完整 prompt，避免把用户输入或密钥相关上下文写进控制台。
      */
     public Optional<String> generate(String systemPrompt, String userPrompt) {
@@ -65,7 +65,7 @@ public class AiTextService {
         }
     }
 
-    private Optional<ChatModel> chatModel() {
+    public Optional<ChatModel> chatModel() {
         Optional<String> apiKey = runtimeSettingsService.stringValue("openai_api_key");
         if (apiKey.isEmpty()) {
             return Optional.empty();

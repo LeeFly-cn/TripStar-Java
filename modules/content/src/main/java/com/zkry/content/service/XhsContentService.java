@@ -1,9 +1,10 @@
 package com.zkry.content.service;
 
-import com.zkry.ai.service.AiTextService;
+import com.zkry.ai.service.AiAgentService;
 import com.zkry.common.core.config.TripstarRuntimeSettingsService;
 import com.zkry.common.core.exception.BizException;
 import com.zkry.ai.service.LlmJsonExtractor;
+import com.zkry.ai.service.PromptResourceService;
 import com.zkry.common.json.utils.JsonUtils;
 import com.zkry.content.dto.ContentAttractionCandidate;
 import com.zkry.content.dto.ContentCityContext;
@@ -11,6 +12,7 @@ import com.zkry.content.dto.ContentCityRequest;
 import com.zkry.content.dto.ContentPlanningContext;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -23,9 +25,12 @@ import tools.jackson.databind.JsonNode;
 public class XhsContentService implements TravelContentService {
 
     private static final Logger log = LoggerFactory.getLogger(XhsContentService.class);
+    private static final String XHS_EXTRACTION_SYSTEM = "prompts/tripstar/xhs-extraction-system.md";
+    private static final String XHS_EXTRACTION_USER = "prompts/tripstar/xhs-extraction-user.md";
 
     private final XhsNativeClient xhsNativeClient;
-    private final AiTextService aiTextService;
+    private final AiAgentService aiAgentService;
+    private final PromptResourceService promptResourceService;
     private final TripstarRuntimeSettingsService runtimeSettingsService;
 
     @Value("${tripstar.content.xhs.enabled:true}")
@@ -36,11 +41,13 @@ public class XhsContentService implements TravelContentService {
 
     public XhsContentService(
         XhsNativeClient xhsNativeClient,
-        AiTextService aiTextService,
+        AiAgentService aiAgentService,
+        PromptResourceService promptResourceService,
         TripstarRuntimeSettingsService runtimeSettingsService
     ) {
         this.xhsNativeClient = xhsNativeClient;
-        this.aiTextService = aiTextService;
+        this.aiAgentService = aiAgentService;
+        this.promptResourceService = promptResourceService;
         this.runtimeSettingsService = runtimeSettingsService;
     }
 
@@ -215,10 +222,17 @@ public class XhsContentService implements TravelContentService {
 
     private List<ContentAttractionCandidate> extractAttractions(ContentCityRequest request, String rawText) {
         log.info("[XHS] 开始 LLM 提炼小红书景点 city={} rawLength={} aiAvailable={}",
-            request.city(), rawText.length(), aiTextService.isAvailable());
-        Optional<String> response = aiTextService.generate(
-            "你是 TripStar 的游记内容提炼智能体。你只输出合法 JSON 数组，不输出 markdown 或解释。",
-            extractionPrompt(request, rawText)
+            request.city(), rawText.length(), aiAgentService.isAvailable());
+        Optional<String> response = aiAgentService.call(
+            "xhs-extraction-agent",
+            promptResourceService.load(XHS_EXTRACTION_SYSTEM),
+            promptResourceService.render(XHS_EXTRACTION_USER, Map.of(
+                "city", request.city(),
+                "keyword", request.keyword(),
+                "language", request.safeLanguage(),
+                "raw_text", rawText
+            )),
+            "xhs-extraction-" + request.city()
         );
         if (response.isEmpty()) {
             log.info("[XHS] LLM 未返回提炼结果 city={}", request.city());
@@ -238,30 +252,6 @@ public class XhsContentService implements TravelContentService {
         }
         log.warn("[XHS] LLM 提炼 JSON 解析失败 city={}", request.city());
         return List.of();
-    }
-
-    private String extractionPrompt(ContentCityRequest request, String rawText) {
-        return """
-            请从以下真实小红书旅游游记中提炼游玩景点，输出严格 JSON 数组。
-
-            城市：%s
-            用户偏好关键词：%s
-            输出语言：%s
-
-            每个对象必须包含：
-            - name：用于前端展示的景点名，按输出语言填写
-            - name_zh：中文简体官方名
-            - name_en：英文官方名
-            - reason：小红书用户真实评价、避坑建议或打卡理由
-            - duration：建议游玩时长，数字，单位分钟
-            - reservation_required：是否需要预约，布尔值
-            - reservation_tips：预约渠道、提前天数、限流提醒等，没有则空字符串
-
-            只提炼真实景点，不要提炼泛泛的城市、酒店、商场广告。
-
-            游记内容：
-            %s
-            """.formatted(request.city(), request.keyword(), request.safeLanguage(), rawText);
     }
 
     private String noteDescription(JsonNode detail) {

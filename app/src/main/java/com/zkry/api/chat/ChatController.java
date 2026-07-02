@@ -1,7 +1,8 @@
 package com.zkry.api.chat;
 
+import com.zkry.ai.service.AiAgentService;
+import com.zkry.ai.service.PromptResourceService;
 import com.zkry.common.core.exception.BizException;
-import com.zkry.ai.service.AiTextService;
 import com.zkry.trip.dto.TripChatResponse;
 import java.util.Map;
 import java.util.Optional;
@@ -17,11 +18,18 @@ import org.springframework.web.bind.annotation.RestController;
 public class ChatController {
 
     private static final Logger log = LoggerFactory.getLogger(ChatController.class);
+    private static final String CHAT_SYSTEM = "prompts/tripstar/chat-system.md";
+    private static final String CHAT_USER = "prompts/tripstar/chat-user.md";
 
-    private final AiTextService aiTextService;
+    private final AiAgentService aiAgentService;
+    private final PromptResourceService promptResourceService;
 
-    public ChatController(AiTextService aiTextService) {
-        this.aiTextService = aiTextService;
+    public ChatController(
+        AiAgentService aiAgentService,
+        PromptResourceService promptResourceService
+    ) {
+        this.aiAgentService = aiAgentService;
+        this.promptResourceService = promptResourceService;
     }
 
     @PostMapping("/ask")
@@ -30,10 +38,15 @@ public class ChatController {
         String message = String.valueOf(request.getOrDefault("message", ""));
         Object tripPlan = request.get("trip_plan");
         log.info("[ChatAPI] 收到伴游问答 messageLength={} hasTripPlan={} aiAvailable={}",
-            message.length(), tripPlan != null, aiTextService.isAvailable());
-        Optional<String> aiReply = aiTextService.generate(
-            "你是 TripStar 的旅行伴游助手。请基于用户提供的 trip_plan 回答问题，回答要简洁、具体、可执行。",
-            "用户问题：" + message + "\n\n当前行程上下文：" + tripPlan
+            message.length(), tripPlan != null, aiAgentService.isAvailable());
+        Optional<String> aiReply = aiAgentService.call(
+            "trip-chat-agent",
+            promptResourceService.load(CHAT_SYSTEM),
+            promptResourceService.render(CHAT_USER, Map.of(
+                "message", message,
+                "trip_plan", String.valueOf(tripPlan)
+            )),
+            "trip-chat"
         );
         String reply = aiReply.orElseThrow(() -> new BizException("AI 未配置或调用失败，请先在设置页填写 AI API Key 和模型名称。"));
         log.info("[ChatAPI] 伴游问答完成 aiReply={} replyLength={} elapsedMs={}",
