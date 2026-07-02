@@ -1,7 +1,7 @@
 spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: ${DB_URL:jdbc:mysql://localhost:3306/voice_cloning?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    url: ${DB_URL:jdbc:mysql://localhost:3306/tripstar?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
     username: ${DB_USERNAME:root}
     password: ${DB_PASSWORD:}
   data:

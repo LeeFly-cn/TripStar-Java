@@ -1,6 +1,6 @@
 spring:
   application:
-    name: voice-cloning
+    name: tripstar
   profiles:
     active: dev
   data:
@@ -47,4 +47,3 @@ mybatis-plus:
       logic-not-delete-value: 0
   configuration:
     map-underscore-to-camel-case: true
-

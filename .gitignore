@@ -10,7 +10,6 @@ logs/
 .codegraph
 .cursor
 .github
-TRIPSTAR_JAVA_MIGRATION_PLAN.md
 ### STS ###
 .apt_generated
 .classpath
