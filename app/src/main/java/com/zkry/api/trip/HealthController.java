@@ -12,7 +12,7 @@ public class HealthController {
         return Map.of(
             "status", "healthy",
             "service", "tripstar-java",
-            "mode", "mock"
+            "mode", "real-config-required"
         );
     }
 }

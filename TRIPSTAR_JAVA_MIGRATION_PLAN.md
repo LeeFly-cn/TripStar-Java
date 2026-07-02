@@ -7,7 +7,7 @@
 - 第一阶段继续复用现有 Vue 前端。
 - 尽量保持 Python 后端现有 API 契约不变。
 - 基于 `backend_java` 开发，不另起一个 Spring Boot 项目。
-- 核心链路不再强依赖小红书 Cookie，小红书后续只作为可选增强源。
+- 小红书必须接入，作为景点游记内容和景点图片的重要来源；未配置 Cookie 时必须明确提示，不再生成模拟行程。
 - 使用 Spring AI Alibaba 承接 LLM 调用、智能体编排、工具调用等能力。
 - 行程生成仍然采用长任务模式：先提交任务，再通过 WebSocket 推送进度，同时保留轮询兜底接口。
 
@@ -15,24 +15,29 @@
 
 截至当前版本，已经完成第一批 Java 骨架代码：
 
-- 已新增 `modules/trip`，包含前端兼容 DTO、mock 行程生成、任务状态服务、WebSocket 事件模型。
-- 已新增 `modules/ai`、`modules/map`、`modules/content` 占位模块。
+- 已新增 `modules/trip`，包含前端兼容 DTO、任务状态服务、WebSocket 事件模型和前端响应/图谱转换。
+- 已新增 `modules/ai`，包含 Spring AI Alibaba 文本调用网关和 LLM JSON 候选提取/修复工具。
+- 已新增 `modules/map`，包含高德地图可选上下文服务：地理编码、景点 POI、酒店 POI、餐饮 POI、天气预报。
+- 已新增 `modules/content`，包含小红书 Cookie 规范化、签名桥、原生 API 客户端、游记采集、LLM 景点提炼、景点搜图。
 - 已引入 Spring AI Alibaba `v2.0.0-M1.1` 相关 BOM 和 AI 模块依赖。
+- 已实现 `TripAiPlannerService`，使用 Spring AI Alibaba/DashScope 生成结构化 `TripPlan`；未配置或解析失败时明确失败，不再回退 mock。
+- 已实现 `TripPlannerPrompts`，会把用户请求和地图上下文一起喂给 LLM。
+- 已实现 `TripPlanResponseFactory`，只负责把 LLM 生成的 `TripPlan` 转成前端需要的 `TripPlanResponse` 和知识图谱。
 - 已新增 `/api/trip/plan`、`/api/trip/status/{taskId}`、`/api/trip/history`。
 - 已新增 `/api/trip/ws/{taskId}` WebSocket 进度推送。
-- 已新增 `/api/chat/ask` mock 伴游问答。
-- 已新增 `/api/poi/photo` mock 图片接口。
-- 已新增 `/api/settings` mock 运行时配置接口。
+- 已新增 `/api/chat/ask` 伴游问答，未配置 AI Key 时明确失败。
+- 已新增 `/api/poi/photo` 小红书图片接口，未配置 Cookie 时明确失败，未找到图片时返回 `success=false`。
+- 已新增 `/api/settings` 运行时配置接口，Vue 设置页保存的 `xhs_cookie`、`vite_amap_web_key`、`openai_api_key`、`openai_model` 会被 Java 后端读取。
 - 已新增 `/health` 健康检查接口。
 - 已将 TripStar 兼容接口加入 Sa-Token 放行。
 - 已把应用名和默认数据库名从脚手架残留的 `voice-cloning` 改为 `tripstar`。
 
-当前阶段仍然是 mock 版：
+当前阶段是“真实配置强依赖”版：
 
-- 还没有接入真实 Spring AI Alibaba 调用。
-- 还没有接入真实高德/Google 地图数据源。
-- 还没有接入真实图片源。
-- 小红书仍然不作为核心链路依赖。
+- Spring AI Alibaba 调用代码已接入，并读取 Vue 设置页保存的 AI Key 和模型名。
+- 高德地图调用代码已接入，并读取 Vue 设置页保存的高德 Web Service Key。
+- 小红书已接入主规划流程：`TripTaskService` 会先采集小红书游记，再收集地图/天气/酒店上下文，最后喂给 Planner Prompt。
+- 默认不配置 Key/Cookie 时会返回明确错误，提醒先到设置页配置，不再返回模拟行程。
 
 当前构建验证：
 
@@ -43,6 +48,20 @@ mvn -q -DskipTests package
 ```
 
 注意：系统默认 Maven 当前使用的是 Java 8，会报 `无效的目标发行版: 21`。需要切到 JDK/JBR 21 后再构建。
+
+可选真实服务配置：
+
+```powershell
+$env:AI_DASHSCOPE_ENABLED='true'
+$env:AI_DASHSCOPE_API_KEY='你的 DashScope Key'
+$env:AI_DASHSCOPE_CHAT_MODEL='qwen-plus'
+
+$env:AMAP_ENABLED='true'
+$env:AMAP_KEY='你的高德 Web 服务 Key'
+
+$env:XHS_ENABLED='true'
+$env:XHS_COOKIE='你的小红书网页端 Cookie'
+```
 
 ## 1. 脚手架适配判断
 
@@ -193,7 +212,7 @@ mvn -q -DskipTests package
 
 ### 阶段 1：基础骨架
 
-目标：让 Java 后端先能编译，并暴露 TripStar 形状的占位接口。
+目标：让 Java 后端先能编译，并暴露 TripStar 形状的接口。
 
 任务：
 
@@ -201,13 +220,13 @@ mvn -q -DskipTests package
 - 引入 Spring AI Alibaba 相关依赖管理和 DashScope/Agent 依赖。
 - 新增 `modules/trip`、`modules/ai`、`modules/map`、`modules/content`。
 - 新增与 Python API 契约一致的 DTO。
-- 新增占位 Controller，先返回固定 mock 数据，确保前端能解析。
+- 新增 Controller，先打通前端契约。
 - 加入 WebSocket 基础设施，或者先实现等价的进度推送能力；尽量保持当前 WebSocket URL 契约。
 
 验证：
 
 - `mvn clean package -DskipTests`
-- 现有 Vue 可以提交到 Java 后端，并拿到一份 mock 的 completed 行程。
+- 现有 Vue 可以提交到 Java 后端；缺少外部配置时能看到明确错误提示。
 
 ### 阶段 2：任务运行时
 
@@ -266,7 +285,7 @@ mvn -q -DskipTests package
 
 ### 阶段 4：地图和 POI 数据源
 
-目标：不再把小红书 Cookie 当作核心依赖，同时保持产品可用。
+目标：接入高德地图真实数据，并与小红书游记内容一起作为规划上下文。
 
 任务：
 
@@ -280,12 +299,12 @@ mvn -q -DskipTests package
   - 优先用高德/Google Place photo，如果可用。
   - 可接入官方图、公开图库或其他合法公开图片源。
   - 找不到图片时返回空字符串或默认图，不能让整个任务失败。
-- 预留 `OptionalXhsSource`，但不要让它阻塞主流程。
+- 小红书是当前主流程必需内容源；未配置 Cookie 或采集失败时明确失败。
 
 验证：
 
-- 只配置 LLM Key + 高德 Key 时，也能完成行程生成。
-- 图片缺失不会导致任务失败。
+- 配置 LLM Key + 高德 Key + 小红书 Cookie 后，才能完成真实行程生成。
+- 图片缺失不会伪装成成功；接口返回 `success=false`。
 
 ### 阶段 5：旅行规划工作流
 
@@ -379,10 +398,10 @@ mvn -q -DskipTests package
   - 后续如何用 Spring AI Alibaba `ReactAgent`、Tool callback、子 Agent 工具化来升级。
   - 天气 Agent、酒店 Agent、景点 Agent、规划 Agent 各自负责什么。
 - LLM 内容提炼：
-  - 如果后续接入小红书或其他游记内容，如何把杂乱文本提炼成结构化景点候选。
+- 小红书游记内容如何被提炼成结构化景点候选。
   - Prompt 如何要求模型输出 JSON 数组。
   - 如何识别景点名、推荐理由、游玩时长、预约提醒、避坑提示、图片候选、坐标候选。
-  - 为什么小红书不作为强依赖，只作为可选内容增强源。
+  - 为什么当前学习版把小红书作为必需内容源，以及后续用户端产品如何替换为更稳定、合规的数据源组合。
 - LLM JSON 解析和容错：
   - 为什么 LLM 输出不能直接信任。
   - 如何从 markdown 中提取 JSON。
@@ -444,13 +463,13 @@ mvn -q -DskipTests package
 
 1. 确认 Spring Boot 4 与 Spring AI Alibaba `v2.0.0-M1.1` 的依赖能否编译。
 2. 只新增 `modules/trip` 和 DTO。
-3. 新增返回 raw JSON 的 `TripController` mock 接口。
+3. 新增返回 raw JSON 的 `TripController` 接口。
 4. 新增任务状态服务和 WebSocket 进度推送。
-5. 验证现有 Vue 能消费 Java mock 任务。
+5. 验证现有 Vue 能消费 Java 任务和错误提示。
 6. 新增 `modules/ai`，先跑通一次简单 chat 调用。
 7. 加入 planner prompt 和 JSON 解析。
 8. 加入地图/POI 数据源。
-9. 把 mock 结果替换成真实生成结果。
+9. 确认缺配置、采集失败、AI 解析失败时都能明确失败。
 10. 在实现稳定后补齐 `docs/TRIPSTAR_AGENT_LEARNING_GUIDE.md`，把智能体协作、LLM 提炼、JSON 解析、路线规划和用户端产品演进写清楚。
 
 每一步都单独构建和验证。不要把 AI、地图、任务运行时、前端兼容一次性混在一个大改动里。
@@ -464,6 +483,6 @@ Java 后端达到下面状态，就可以认为第一版迁移基本完成：
 - Java 后端能返回带 `data` 和 `graph_data` 的 `TripPlanResponse`。
 - Result 页面能渲染概览、每日行程、预算、地图和知识图谱。
 - AIChat 能基于生成的行程上下文回答问题。
-- 主流程不需要小红书 Cookie。
+- 主流程需要小红书 Cookie；未配置时必须明确提示。
 - `mvn clean package` 可以通过。
 - 已提供中文学习文档，能让你复盘 Java 代码结构，重点理解智能体协作、LLM 内容提炼、JSON 解析、路线规划和未来用户端旅游规划产品的演进方向。

@@ -18,8 +18,10 @@ public record TripRequest(
         if (cities != null && !cities.isEmpty()) {
             return cities;
         }
-        String fallbackCity = isBlank(city) ? "北京" : city;
-        return List.of(new CityStay(fallbackCity, safeTravelDays()));
+        if (isBlank(city)) {
+            return List.of();
+        }
+        return List.of(new CityStay(city, safeTravelDays()));
     }
 
     public int safeTravelDays() {

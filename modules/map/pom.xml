@@ -11,4 +11,25 @@
 
     <artifactId>map</artifactId>
     <description>TripStar 地图、地理编码、POI、天气能力模块</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.zkry</groupId>
+            <artifactId>core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.zkry</groupId>
+            <artifactId>json</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>tools.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
+        </dependency>
+    </dependencies>
 </project>

@@ -1,8 +1,21 @@
+﻿
 spring:
+  autoconfigure:
+    exclude:
+      # Spring AI Alibaba 2.0.0-M1.1 的 dashscope autoconfigure imports 中引用了这个缺失类。
+      # 先显式排除，保留 ChatClient/DashScope starter 的学习接入路径。
+      - com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeMultimodalEmbeddingAutoConfiguration
   application:
     name: tripstar
   profiles:
     active: dev
+  ai:
+    dashscope:
+      enabled: ${AI_DASHSCOPE_ENABLED:true}
+      api-key: ${AI_DASHSCOPE_API_KEY:sk-ws-H.RXIEDIM.sbNt.MEQCIHM4Yd-RpzdTYCvoX7O6irqYhoVEA5Hd0_AV4SgbyrreAiBnf_aSJTfO5HmKfAe-L-ExdtHgAz_LFYamocyR1yTzJA}
+      chat:
+        options:
+          model: ${AI_DASHSCOPE_CHAT_MODEL:qwen-plus}
   data:
     redis:
       timeout: 10s
@@ -11,6 +24,22 @@ spring:
 logging:
   file:
     path: ./logs
+
+tripstar:
+  map:
+    amap:
+      enabled: ${AMAP_ENABLED:true}
+      key: ${AMAP_KEY:61efbe8221fcd2ecea8e83963e463597}
+      base-url: ${AMAP_BASE_URL:https://restapi.amap.com}
+  content:
+    xhs:
+      enabled: ${XHS_ENABLED:true}
+      cookie: ${XHS_COOKIE:}
+      base-url: ${XHS_BASE_URL:https://edith.xiaohongshu.com}
+      # 第一阶段复用 Python 项目里的签名 JS 资产；后续可复制到 backend_java/resources 做独立部署。
+      sign-dir: ${XHS_SIGN_DIR:../backend/app/services/xhs_sign}
+      node-command: ${XHS_NODE_COMMAND:node}
+      max-notes: ${XHS_MAX_NOTES:4}
 
 ############## Sa-Token 配置 (文档: https://sa-token.cc) ##############
 sa-token:
@@ -47,3 +76,4 @@ mybatis-plus:
       logic-not-delete-value: 0
   configuration:
     map-underscore-to-camel-case: true
+

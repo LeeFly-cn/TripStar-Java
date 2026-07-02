@@ -3,7 +3,7 @@
 
     <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
 
-    <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="voice-cloning"/>
+    <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="tripstar"/>
     <springProperty scope="context" name="LOG_PATH" source="logging.file.path" defaultValue="./logs"/>
 
     <property name="APP_LOG_FILE" value="${LOG_PATH}/${APP_NAME}.log"/>
