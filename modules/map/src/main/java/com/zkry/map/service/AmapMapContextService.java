@@ -1,6 +1,8 @@
 package com.zkry.map.service;
 
 import com.zkry.common.core.config.TripstarRuntimeSettingsService;
+import com.zkry.common.core.config.TripstarSettingKeys;
+import com.zkry.common.core.constant.TravelDataSource;
 import com.zkry.common.core.exception.BizException;
 import com.zkry.common.json.utils.JsonUtils;
 import com.zkry.map.dto.MapCityContext;
@@ -28,6 +30,13 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
 
+/**
+ * 高德 REST API 访问层。
+ *
+ * <p>这里放确定性、可测试的 HTTP 能力：地理编码、POI、天气。上层既可以通过
+ * {@link MapContextService#collect(List)} 直接采集，也可以通过 {@link AmapTravelTools}
+ * 暴露给 ReactAgent 调用。这样 Tool 只是“外壳”，不会复制一套高德请求逻辑。
+ */
 @Service
 public class AmapMapContextService implements MapContextService {
 
@@ -52,18 +61,10 @@ public class AmapMapContextService implements MapContextService {
 
     @Override
     public MapPlanningContext collect(List<MapCityRequest> cityRequests) {
-        String apiKey = apiKey();
-        if (!enabled) {
-            log.warn("[AMap] 高德地图未启用 enabled={}", enabled);
-            throw new BizException("高德地图未启用，请检查 tripstar.map.amap.enabled 配置。");
-        }
-        if (apiKey.isBlank()) {
-            log.warn("[AMap] 高德地图 Web Service Key 未配置");
-            throw new BizException("高德地图 Web Service Key 未配置，请先在设置页填写“高德地图 Web Service Key”。");
-        }
+        validateReady();
         if (cityRequests == null || cityRequests.isEmpty()) {
             log.info("[AMap] 城市请求为空，跳过地图上下文采集");
-            return MapPlanningContext.empty("amap", "没有城市信息，地图上下文跳过。");
+            return MapPlanningContext.empty(TravelDataSource.AMAP, "没有城市信息，地图上下文跳过。");
         }
 
         long startedAt = System.currentTimeMillis();
@@ -81,7 +82,7 @@ public class AmapMapContextService implements MapContextService {
         String message = hasData ? "已采集高德地图 POI、酒店、餐饮和天气上下文。" : "高德地图未返回有效上下文，请检查 Key 权限、城市名或接口配额。";
         log.info("[AMap] 地图上下文采集结束 realData={} cityContexts={} elapsedMs={}",
             hasData, contexts.size(), System.currentTimeMillis() - startedAt);
-        return new MapPlanningContext(contexts, hasData, "amap", message);
+        return new MapPlanningContext(contexts, hasData, TravelDataSource.AMAP, message);
     }
 
     /**
@@ -89,7 +90,8 @@ public class AmapMapContextService implements MapContextService {
      *
      * <p>这些数据会被写进规划 prompt，帮助 LLM 生成更像真实旅行助手的路线和提醒。
      */
-    private MapCityContext collectCity(MapCityRequest request) throws IOException, InterruptedException {
+    public MapCityContext collectCity(MapCityRequest request) throws IOException, InterruptedException {
+        validateReady();
         long startedAt = System.currentTimeMillis();
         log.info("[AMap] 开始采集城市地图上下文 city={} days={} preferences={} accommodation={}",
             request.city(), request.days(), request.safePreferences(), request.accommodation());
@@ -116,7 +118,8 @@ public class AmapMapContextService implements MapContextService {
         );
     }
 
-    private GeocodeResult geocode(String city) throws IOException, InterruptedException {
+    public GeocodeResult geocode(String city) throws IOException, InterruptedException {
+        validateReady();
         log.info("[AMap] 地理编码 city={}", city);
         Map<String, String> params = new LinkedHashMap<>();
         params.put("address", city);
@@ -135,7 +138,8 @@ public class AmapMapContextService implements MapContextService {
         return result;
     }
 
-    private List<MapPoi> searchPois(String city, String keywords, int limit) throws IOException, InterruptedException {
+    public List<MapPoi> searchPois(String city, String keywords, int limit) throws IOException, InterruptedException {
+        validateReady();
         log.info("[AMap] POI 搜索 city={} keywords={} limit={}", city, keywords, limit);
         Map<String, String> params = new LinkedHashMap<>();
         params.put("keywords", keywords);
@@ -174,7 +178,8 @@ public class AmapMapContextService implements MapContextService {
         return result;
     }
 
-    private List<MapWeatherForecast> weatherForecasts(String city, String adcode) throws IOException, InterruptedException {
+    public List<MapWeatherForecast> weatherForecasts(String city, String adcode) throws IOException, InterruptedException {
+        validateReady();
         String cityCode = firstNonBlank(adcode, city);
         if (cityCode.isBlank()) {
             log.info("[AMap] 天气查询跳过 city={} reason=cityCodeBlank", city);
@@ -251,7 +256,19 @@ public class AmapMapContextService implements MapContextService {
     }
 
     private String apiKey() {
-        return runtimeSettingsService.stringValue("vite_amap_web_key").orElse("");
+        return runtimeSettingsService.stringValue(TripstarSettingKeys.AMAP_WEB_KEY).orElse("");
+    }
+
+    public void validateReady() {
+        String apiKey = apiKey();
+        if (!enabled) {
+            log.warn("[AMap] 高德地图未启用 enabled={}", enabled);
+            throw new BizException("高德地图未启用，请检查 tripstar.map.amap.enabled 配置。");
+        }
+        if (apiKey.isBlank()) {
+            log.warn("[AMap] 高德地图 Web Service Key 未配置");
+            throw new BizException("高德地图 Web Service Key 未配置，请先在设置页填写“高德地图 Web Service Key”。");
+        }
     }
 
     private String attractionKeywords(MapCityRequest request) {
@@ -327,6 +344,6 @@ public class AmapMapContextService implements MapContextService {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
-    private record GeocodeResult(String adcode, MapPoint point) {
+    public record GeocodeResult(String adcode, MapPoint point) {
     }
 }

@@ -4,6 +4,7 @@ import com.alibaba.cloud.ai.dashscope.api.DashScopeApi;
 import com.alibaba.cloud.ai.dashscope.chat.DashScopeChatModel;
 import com.alibaba.cloud.ai.dashscope.chat.DashScopeChatOptions;
 import com.zkry.common.core.config.TripstarRuntimeSettingsService;
+import com.zkry.common.core.config.TripstarSettingKeys;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,7 +24,7 @@ public class AiTextService {
     }
 
     public boolean isAvailable() {
-        boolean available = runtimeSettingsService.hasText("openai_api_key");
+        boolean available = runtimeSettingsService.hasText(TripstarSettingKeys.OPENAI_API_KEY);
         log.debug("[AI] 运行时 AI 配置可用性检查 available={}", available);
         return available;
     }
@@ -66,12 +67,12 @@ public class AiTextService {
     }
 
     public Optional<ChatModel> chatModel() {
-        Optional<String> apiKey = runtimeSettingsService.stringValue("openai_api_key");
+        Optional<String> apiKey = runtimeSettingsService.stringValue(TripstarSettingKeys.OPENAI_API_KEY);
         if (apiKey.isEmpty()) {
             return Optional.empty();
         }
-        String model = runtimeSettingsService.stringValue("openai_model").orElse("qwen-plus");
-        String baseUrl = runtimeSettingsService.stringValue("openai_base_url").orElse("");
+        String model = runtimeSettingsService.stringValue(TripstarSettingKeys.OPENAI_MODEL).orElse("qwen-plus");
+        String baseUrl = runtimeSettingsService.stringValue(TripstarSettingKeys.OPENAI_BASE_URL).orElse("");
         try {
             DashScopeApi.Builder apiBuilder = DashScopeApi.builder().apiKey(apiKey.get());
             if (!baseUrl.isBlank()) {

@@ -1,8 +1,12 @@
 package com.zkry.trip.service;
 
+import com.zkry.ai.agent.TripstarAgent;
+import com.zkry.ai.prompt.TripstarPrompt;
+import com.zkry.ai.prompt.TripstarPromptVariable;
 import com.zkry.ai.service.AiAgentService;
-import com.zkry.ai.service.LlmJsonExtractor;
+import com.zkry.ai.service.AiStructuredOutputService;
 import com.zkry.ai.service.PromptResourceService;
+import com.zkry.common.core.constant.TravelDataSource;
 import com.zkry.common.json.utils.JsonUtils;
 import com.zkry.content.dto.ContentPlanningContext;
 import com.zkry.map.dto.MapPlanningContext;
@@ -20,19 +24,29 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+/**
+ * 行程规划 Agent 编排服务。
+ *
+ * <p>Research 阶段只负责查资料；这个类负责把用户需求、地图上下文、小红书上下文
+ * 交给 PlannerAgent 生成 {@link TripPlan}，再交给 ReviewAgent 做结构检查。
+ * LLM 输出不再手写扒 JSON，而是通过 {@link AiStructuredOutputService} 转成 DTO。
+ */
 @Service
 public class TripAiPlannerService {
 
     private static final Logger log = LoggerFactory.getLogger(TripAiPlannerService.class);
 
     private final AiAgentService aiAgentService;
+    private final AiStructuredOutputService structuredOutputService;
     private final PromptResourceService promptResourceService;
 
     public TripAiPlannerService(
         AiAgentService aiAgentService,
+        AiStructuredOutputService structuredOutputService,
         PromptResourceService promptResourceService
     ) {
         this.aiAgentService = aiAgentService;
+        this.structuredOutputService = structuredOutputService;
         this.promptResourceService = promptResourceService;
     }
 
@@ -41,11 +55,11 @@ public class TripAiPlannerService {
     }
 
     public Optional<TripPlanResponse> plan(String planId, TripRequest request) {
-        return plan(planId, request, MapPlanningContext.empty("none", "未采集地图上下文。"));
+        return plan(planId, request, MapPlanningContext.empty(TravelDataSource.NONE, "未采集地图上下文。"));
     }
 
     public Optional<TripPlanResponse> plan(String planId, TripRequest request, MapPlanningContext mapContext) {
-        return plan(planId, request, mapContext, ContentPlanningContext.empty("none", "未采集游记内容上下文。"));
+        return plan(planId, request, mapContext, ContentPlanningContext.empty(TravelDataSource.NONE, "未采集游记内容上下文。"));
     }
 
     public Optional<TripPlanResponse> plan(
@@ -55,11 +69,10 @@ public class TripAiPlannerService {
         ContentPlanningContext contentContext
     ) {
         long startedAt = System.currentTimeMillis();
-        String systemPrompt = promptResourceService.load(TripPlannerPrompts.PLANNER_SYSTEM);
-        String prompt = promptResourceService.render(
-            TripPlannerPrompts.PLANNER_USER,
-            TripPlannerPrompts.plannerVariables(request, mapContext, contentContext)
-        );
+        String systemPrompt = promptResourceService.load(TripstarPrompt.PLANNER_SYSTEM);
+        Map<String, String> variables = new java.util.LinkedHashMap<>(TripPlannerPrompts.plannerVariables(request, mapContext, contentContext));
+        variables.put(TripstarPromptVariable.FORMAT, structuredOutputService.format(TripPlan.class));
+        String prompt = promptResourceService.render(TripstarPrompt.PLANNER_USER, variables);
         log.info("[AI-PLAN] 开始行程规划 planId={} city={} days={} contentRealData={} contentCities={} mapRealData={} mapCities={}",
             planId,
             request.primaryCity(),
@@ -69,23 +82,15 @@ public class TripAiPlannerService {
             mapContext != null && mapContext.realData(),
             mapContext == null ? 0 : mapContext.safeCities().size());
 
-        Optional<String> response = aiAgentService.call(
-            "trip-planner-agent",
+        Optional<TripPlan> parsedPlan = structuredOutputService.callForObject(
+            TripstarAgent.TRIP_PLANNER,
+            TripPlan.class,
             systemPrompt,
             prompt,
             planId + "-planner"
         );
-        if (response.isEmpty()) {
+        if (parsedPlan.isEmpty()) {
             log.info("[AI-PLAN] TripPlannerAgent 未返回规划内容 planId={} elapsedMs={}",
-                planId, System.currentTimeMillis() - startedAt);
-            return Optional.empty();
-        }
-        Optional<TripPlan> parsedPlan = parsePlan(planId, request, response.get(), "planner");
-        if (parsedPlan.isEmpty()) {
-            parsedPlan = repairPlan(planId, request, response.get());
-        }
-        if (parsedPlan.isEmpty()) {
-            log.warn("[AI-PLAN] TripPlan JSON 解析和修复均失败 planId={} elapsedMs={}",
                 planId, System.currentTimeMillis() - startedAt);
             return Optional.empty();
         }
@@ -102,60 +107,38 @@ public class TripAiPlannerService {
         return Optional.of(TripPlanResponseFactory.fromPlan(planId, normalized));
     }
 
-    private Optional<TripPlan> parsePlan(String planId, TripRequest request, String rawResponse, String source) {
-        List<String> candidates = LlmJsonExtractor.extractJsonObjectCandidates(rawResponse);
-        log.info("[AI-PLAN] {} 返回规划内容 planId={} responseLength={} jsonCandidates={}",
-            source, planId, rawResponse == null ? 0 : rawResponse.length(), candidates.size());
-        int index = 0;
-        for (String json : candidates) {
-            index++;
-            try {
-                TripPlan plan = JsonUtils.parseObject(json, TripPlan.class);
-                if (plan != null) {
-                    log.info("[AI-PLAN] 行程 JSON 解析成功 planId={} source={} candidateIndex={}",
-                        planId,
-                        source,
-                        index);
-                    return Optional.of(plan);
-                }
-            } catch (Exception ex) {
-                log.debug("[AI-PLAN] 行程 JSON 候选解析失败 planId={} source={} candidateIndex={} reason={}",
-                    planId, source, index, ex.getMessage());
-            }
-        }
-        return Optional.empty();
-    }
-
     private Optional<TripPlan> repairPlan(String planId, TripRequest request, String rawResponse) {
-        String systemPrompt = promptResourceService.load(TripPlannerPrompts.JSON_REPAIR_SYSTEM);
+        String systemPrompt = promptResourceService.load(TripstarPrompt.JSON_REPAIR_SYSTEM);
         String userPrompt = promptResourceService.render(
-            TripPlannerPrompts.JSON_REPAIR_USER,
-            Map.of("raw_response", rawResponse == null ? "" : rawResponse)
+            TripstarPrompt.JSON_REPAIR_USER,
+            Map.of(
+                TripstarPromptVariable.RAW_RESPONSE, rawResponse == null ? "" : rawResponse,
+                TripstarPromptVariable.FORMAT, structuredOutputService.format(TripPlan.class)
+            )
         );
-        Optional<String> repaired = aiAgentService.call(
-            "json-repair-agent",
+        return structuredOutputService.callForObject(
+            TripstarAgent.JSON_REPAIR,
+            TripPlan.class,
             systemPrompt,
             userPrompt,
             planId + "-repair"
         );
-        if (repaired.isEmpty()) {
-            return Optional.empty();
-        }
-        return parsePlan(planId, request, repaired.get(), "repair");
     }
 
     private boolean reviewPlan(String planId, TripRequest request, TripPlan plan) {
-        String systemPrompt = promptResourceService.load(TripPlannerPrompts.REVIEW_SYSTEM);
+        String systemPrompt = promptResourceService.load(TripstarPrompt.REVIEW_SYSTEM);
         String userPrompt = promptResourceService.render(
-            TripPlannerPrompts.REVIEW_USER,
+            TripstarPrompt.REVIEW_USER,
             Map.of(
-                "travel_days", String.valueOf(request.safeTravelDays()),
-                "city_names", String.join("、", plan.cities() == null ? List.of() : plan.cities()),
-                "trip_plan_json", JsonUtils.toJsonString(plan)
+                TripstarPromptVariable.TRAVEL_DAYS, String.valueOf(request.safeTravelDays()),
+                TripstarPromptVariable.CITY_NAMES, String.join("、", plan.cities() == null ? List.of() : plan.cities()),
+                TripstarPromptVariable.TRIP_PLAN_JSON, JsonUtils.toJsonString(plan),
+                TripstarPromptVariable.FORMAT, structuredOutputService.format(ReviewResult.class)
             )
         );
-        Optional<String> response = aiAgentService.call(
-            "trip-review-agent",
+        Optional<ReviewResult> response = structuredOutputService.callForObject(
+            TripstarAgent.TRIP_REVIEW,
+            ReviewResult.class,
             systemPrompt,
             userPrompt,
             planId + "-review"
@@ -164,23 +147,13 @@ public class TripAiPlannerService {
             log.warn("[AI-REVIEW] ReviewAgent 未返回结果 planId={}", planId);
             return false;
         }
-        for (String json : LlmJsonExtractor.extractJsonObjectCandidates(response.get())) {
-            try {
-                ReviewResult result = JsonUtils.parseObject(json, ReviewResult.class);
-                if (result != null) {
-                    log.info("[AI-REVIEW] ReviewAgent 完成 planId={} passed={} issues={}",
-                        planId, result.passed(), result.safeIssues().size());
-                    if (!result.passed()) {
-                        log.warn("[AI-REVIEW] 行程质检未通过 planId={} issues={}", planId, result.safeIssues());
-                    }
-                    return result.passed();
-                }
-            } catch (Exception ex) {
-                log.debug("[AI-REVIEW] ReviewAgent JSON 解析失败 planId={} reason={}", planId, ex.getMessage());
-            }
+        ReviewResult result = response.get();
+        log.info("[AI-REVIEW] ReviewAgent 完成 planId={} passed={} issues={}",
+            planId, result.passed(), result.safeIssues().size());
+        if (!result.passed()) {
+            log.warn("[AI-REVIEW] 行程质检未通过 planId={} issues={}", planId, result.safeIssues());
         }
-        log.warn("[AI-REVIEW] ReviewAgent 输出不可解析 planId={}", planId);
-        return false;
+        return result.passed();
     }
 
     private TripPlan normalize(TripPlan plan, TripRequest request) {

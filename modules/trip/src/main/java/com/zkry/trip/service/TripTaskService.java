@@ -1,13 +1,11 @@
 package com.zkry.trip.service;
 
 import com.zkry.common.core.config.TripstarRuntimeSettingsService;
+import com.zkry.common.core.config.TripstarSettingKeys;
 import com.zkry.common.core.exception.BizException;
-import com.zkry.content.dto.ContentCityRequest;
 import com.zkry.content.dto.ContentPlanningContext;
-import com.zkry.content.service.TravelContentService;
-import com.zkry.map.dto.MapCityRequest;
 import com.zkry.map.dto.MapPlanningContext;
-import com.zkry.map.service.MapContextService;
+import com.zkry.trip.constant.TripTaskMessages;
 import com.zkry.trip.dto.SubmitTripPlanResponse;
 import com.zkry.trip.dto.TripPlanResponse;
 import com.zkry.trip.dto.TripRequest;
@@ -26,34 +24,40 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+/**
+ * 旅行规划任务状态机。
+ *
+ * <p>Controller 只负责提交请求；真正的异步执行、阶段推进、WebSocket 事件推送都在这里。
+ * 它不直接实现小红书/高德/LLM 细节，而是按阶段调用 {@link TripResearchService}
+ * 和 {@link TripAiPlannerService}，让主流程保持可读。
+ */
 @Service
 public class TripTaskService {
 
     private static final Logger log = LoggerFactory.getLogger(TripTaskService.class);
 
-    private static final String STATUS_PROCESSING = "processing";
-    private static final String STATUS_COMPLETED = "completed";
-    private static final String STATUS_FAILED = "failed";
-
     private final Map<String, TripTaskState> tasks = new ConcurrentHashMap<>();
     private final ExecutorService executorService = Executors.newCachedThreadPool();
     private final TripAiPlannerService tripAiPlannerService;
-    private final MapContextService mapContextService;
-    private final TravelContentService travelContentService;
+    private final TripResearchService tripResearchService;
     private final TripstarRuntimeSettingsService runtimeSettingsService;
 
     public TripTaskService(
         TripAiPlannerService tripAiPlannerService,
-        MapContextService mapContextService,
-        TravelContentService travelContentService,
+        TripResearchService tripResearchService,
         TripstarRuntimeSettingsService runtimeSettingsService
     ) {
         this.tripAiPlannerService = tripAiPlannerService;
-        this.mapContextService = mapContextService;
-        this.travelContentService = travelContentService;
+        this.tripResearchService = tripResearchService;
         this.runtimeSettingsService = runtimeSettingsService;
     }
 
+    /**
+     * 提交旅行规划任务。
+     *
+     * <p>接口不会同步等 LLM 全部跑完，而是立刻返回 taskId 和 WebSocket 地址。
+     * 真正耗时的资料研究、规划、图谱构建会在后台线程里执行。
+     */
     public SubmitTripPlanResponse submit(TripRequest request) {
         validateTripRequest(request);
         validateRuntimeSettings();
@@ -68,14 +72,14 @@ public class TripTaskService {
             safeLog(request.end_date()),
             request.safePreferences(),
             tripAiPlannerService.isAvailable());
-        update(taskId, STATUS_PROCESSING, "submitted", 5, "任务已提交，正在初始化流程...", null, null);
+        update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.SUBMITTED, 5, TripTaskMessages.SUBMITTED, null, null);
         CompletableFuture.runAsync(() -> runPlanning(taskId, request), executorService);
         return new SubmitTripPlanResponse(
             taskId,
             taskId,
-            STATUS_PROCESSING,
+            TripTaskStatus.PROCESSING,
             "/api/trip/ws/" + taskId,
-            "任务已提交，正在初始化流程..."
+            TripTaskMessages.SUBMITTED
         );
     }
 
@@ -90,11 +94,11 @@ public class TripTaskService {
         payload.put("task_id", state.taskId);
         payload.put("plan_id", state.taskId);
         payload.put("status", state.status);
-        if (STATUS_COMPLETED.equals(state.status)) {
+        if (TripTaskStatus.COMPLETED.equals(state.status)) {
             payload.put("result", state.result);
             return payload;
         }
-        if (STATUS_FAILED.equals(state.status)) {
+        if (TripTaskStatus.FAILED.equals(state.status)) {
             payload.put("error", state.error);
             payload.put("request_payload", state.requestPayload());
             return payload;
@@ -123,37 +127,43 @@ public class TripTaskService {
         return state;
     }
 
+    /**
+     * 后台任务主流程。
+     *
+     * <p>这是整套 Java 版 TripStar 的最重要阅读入口：先进入资料研究 Agent，
+     * 再进入 Planner/Review Agent，最后把结构化结果推给前端。
+     */
     private void runPlanning(String taskId, TripRequest request) {
         long startedAt = System.currentTimeMillis();
         try {
             log.info("[TripTask] 开始执行任务 taskId={} city={} language={} transportation={} accommodation={}",
                 taskId, request.primaryCity(), request.safeLanguage(), request.safeTransportation(), request.safeAccommodation());
             pause();
-            update(taskId, STATUS_PROCESSING, "initializing", 10, "正在初始化 Spring AI Alibaba 旅行规划工作流...", null, null);
+            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.INITIALIZING, 10, TripTaskMessages.INITIALIZING, null, null);
             pause();
-            update(taskId, STATUS_PROCESSING, "attraction_search", 24, "正在搜索小红书游记和景点候选数据...", null, null);
-            // 小红书负责真实游记、避坑建议和景点图片，是 Python 版 TripStar 的核心内容源。
-            ContentPlanningContext contentContext = collectContentContext(request);
-            log.info("[TripTask] 小红书内容阶段完成 taskId={} realData={} cities={} message={}",
-                taskId, contentContext.realData(), contentContext.safeCities().size(), contentContext.message());
+            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.TRAVEL_RESEARCH, 24, TripTaskMessages.TRAVEL_RESEARCH, null, null);
+            TripResearchService.ResearchContext researchContext = tripResearchService.research(taskId, request);
+            ContentPlanningContext contentContext = researchContext.contentContext();
+            MapPlanningContext mapContext = researchContext.mapContext();
+            log.info("[TripTask] 资料研究阶段完成 taskId={} mapRealData={} mapCities={} contentRealData={} contentCities={} summary={}",
+                taskId,
+                mapContext.realData(),
+                mapContext.safeCities().size(),
+                contentContext.realData(),
+                contentContext.safeCities().size(),
+                researchContext.researchResult().safeSummary());
+            if (!mapContext.realData()) {
+                throw new BizException("高德地图上下文采集失败：" + mapContext.message());
+            }
             if (!contentContext.realData()) {
                 throw new BizException("小红书内容采集失败：" + contentContext.message());
             }
             pause();
-            update(taskId, STATUS_PROCESSING, "attraction_search", 34, contentStageMessage(contentContext), null, null);
-            // 地图上下文负责 POI、酒店、餐饮、天气和坐标。现在不再生成模拟行程，采集不到真实上下文就明确失败。
-            MapPlanningContext mapContext = collectMapContext(request);
-            log.info("[TripTask] 地图上下文阶段完成 taskId={} realData={} cities={} message={}",
-                taskId, mapContext.realData(), mapContext.safeCities().size(), mapContext.message());
-            if (!mapContext.realData()) {
-                throw new BizException("高德地图上下文采集失败：" + mapContext.message());
-            }
+            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.WEATHER_SEARCH, 46, mapStageMessage(mapContext, "天气"), null, null);
             pause();
-            update(taskId, STATUS_PROCESSING, "weather_search", 46, mapStageMessage(mapContext, "天气"), null, null);
+            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.HOTEL_SEARCH, 64, mapStageMessage(mapContext, "酒店和餐饮"), null, null);
             pause();
-            update(taskId, STATUS_PROCESSING, "hotel_search", 64, mapStageMessage(mapContext, "酒店和餐饮"), null, null);
-            pause();
-            update(taskId, STATUS_PROCESSING, "planning", 85, "正在调用 Spring AI Alibaba 生成行程结构...", null, null);
+            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.PLANNING, 85, TripTaskMessages.PLANNING, null, null);
             TripPlanResponse response = tripAiPlannerService.plan(taskId, request, mapContext, contentContext)
                 .orElseThrow(() -> new BizException("Spring AI Alibaba 未能生成可解析的行程 JSON，请检查 AI Key、模型名和提示词约束。"));
             log.info("[TripTask] 规划结果生成 taskId={} days={} graphNodes={}",
@@ -161,14 +171,14 @@ public class TripTaskService {
                 response.data() == null || response.data().days() == null ? 0 : response.data().days().size(),
                 response.graph_data() == null || response.graph_data().nodes() == null ? 0 : response.graph_data().nodes().size());
             pause();
-            update(taskId, STATUS_PROCESSING, "graph_building", 95, "正在构建知识图谱...", null, null);
+            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.GRAPH_BUILDING, 95, TripTaskMessages.GRAPH_BUILDING, null, null);
             pause();
-            update(taskId, STATUS_COMPLETED, "completed", 100, "旅行计划生成成功", response, null);
+            update(taskId, TripTaskStatus.COMPLETED, TripTaskStage.COMPLETED, 100, TripTaskMessages.COMPLETED, response, null);
             log.info("[TripTask] 任务执行完成 taskId={} elapsedMs={}", taskId, System.currentTimeMillis() - startedAt);
         } catch (Exception ex) {
             log.error("[TripTask] 任务执行失败 taskId={} elapsedMs={} reason={}",
                 taskId, System.currentTimeMillis() - startedAt, ex.getMessage(), ex);
-            update(taskId, STATUS_FAILED, "failed", 100, "旅行计划生成失败", null, ex.getMessage());
+            update(taskId, TripTaskStatus.FAILED, TripTaskStage.FAILED, 100, TripTaskMessages.FAILED, null, ex.getMessage());
         }
     }
 
@@ -184,18 +194,24 @@ public class TripTaskService {
         }
     }
 
+    /**
+     * 校验 Vue 设置页或 application.yml 提供的运行时配置。
+     *
+     * <p>现在项目不再用模拟数据兜底，缺少 Cookie、地图 Key 或模型配置时会直接失败，
+     * 这样日志和前端错误都能明确告诉你缺哪一项。
+     */
     private void validateRuntimeSettings() {
         List<String> missing = new ArrayList<>();
-        if (!runtimeSettingsService.hasText("xhs_cookie")) {
+        if (!runtimeSettingsService.hasText(TripstarSettingKeys.XHS_COOKIE)) {
             missing.add("小红书 Cookie");
         }
-        if (!runtimeSettingsService.hasText("vite_amap_web_key")) {
+        if (!runtimeSettingsService.hasText(TripstarSettingKeys.AMAP_WEB_KEY)) {
             missing.add("高德地图 Web Service Key");
         }
-        if (!runtimeSettingsService.hasText("openai_api_key")) {
+        if (!runtimeSettingsService.hasText(TripstarSettingKeys.OPENAI_API_KEY)) {
             missing.add("AI API Key");
         }
-        if (!runtimeSettingsService.hasText("openai_model")) {
+        if (!runtimeSettingsService.hasText(TripstarSettingKeys.OPENAI_MODEL)) {
             missing.add("AI 模型名称");
         }
         if (!missing.isEmpty()) {
@@ -205,55 +221,6 @@ public class TripTaskService {
         }
     }
 
-    /**
-     * 收集真实游记内容。小红书失败时返回空上下文，主任务继续执行地图和规划阶段。
-     */
-    private ContentPlanningContext collectContentContext(TripRequest request) {
-        try {
-            List<ContentCityRequest> cityRequests = request.normalizedCities().stream()
-                .map(city -> new ContentCityRequest(
-                    city.city(),
-                    city.safeDays(),
-                    request.safePreferences(),
-                    request.safeLanguage()
-                ))
-                .toList();
-            log.info("[TripTask] 准备采集小红书内容 cities={}", cityRequests.stream().map(ContentCityRequest::city).toList());
-            return travelContentService.collect(cityRequests);
-        } catch (Exception ex) {
-            log.warn("[TripTask] 小红书内容采集降级 reason={}", ex.getMessage());
-            return ContentPlanningContext.empty("xhs", "小红书内容采集失败：" + ex.getMessage());
-        }
-    }
-
-    /**
-     * 收集地图、酒店、餐饮、天气上下文。第三方地图失败时降级，不让整条行程任务失败。
-     */
-    private MapPlanningContext collectMapContext(TripRequest request) {
-        try {
-            List<MapCityRequest> cityRequests = request.normalizedCities().stream()
-                .map(city -> new MapCityRequest(
-                    city.city(),
-                    city.safeDays(),
-                    request.safePreferences(),
-                    request.safeAccommodation()
-                ))
-                .toList();
-            log.info("[TripTask] 准备采集地图上下文 cities={}", cityRequests.stream().map(MapCityRequest::city).toList());
-            return mapContextService.collect(cityRequests);
-        } catch (Exception ex) {
-            log.warn("[TripTask] 地图上下文采集降级 reason={}", ex.getMessage());
-            return MapPlanningContext.empty("amap", "地图上下文采集失败：" + ex.getMessage());
-        }
-    }
-
-    private String contentStageMessage(ContentPlanningContext contentContext) {
-        if (contentContext.realData()) {
-            return "已获取小红书游记内容，正在补充地图坐标和天气上下文...";
-        }
-        return contentContext.message() + " 正在继续查询地图景点候选数据。";
-    }
-
     private String mapStageMessage(MapPlanningContext mapContext, String subject) {
         if (mapContext.realData()) {
             return "已获取地图" + subject + "上下文，正在整理给规划智能体...";
@@ -261,6 +228,11 @@ public class TripTaskService {
         return mapContext.message() + " 正在继续准备" + subject + "候选信息。";
     }
 
+    /**
+     * 更新内存任务状态，并推送给所有 WebSocket 订阅者。
+     *
+     * <p>前端进度条、轮询接口和最终结果都来自这里维护的 {@link TripTaskState}。
+     */
     private void update(
         String taskId,
         String status,
@@ -311,8 +283,8 @@ public class TripTaskService {
         private final TripRequest request;
         private final CopyOnWriteArrayList<TripTaskSubscriber> subscribers = new CopyOnWriteArrayList<>();
 
-        private volatile String status = STATUS_PROCESSING;
-        private volatile String stage = "submitted";
+        private volatile String status = TripTaskStatus.PROCESSING;
+        private volatile String stage = TripTaskStage.SUBMITTED;
         private volatile int progress = 0;
         private volatile String message = "";
         private volatile String error = "";
@@ -333,7 +305,7 @@ public class TripTaskService {
                 message,
                 error == null || error.isBlank() ? null : error,
                 includeResult ? result : null,
-                STATUS_FAILED.equals(status) ? requestPayload() : null
+                TripTaskStatus.FAILED.equals(status) ? requestPayload() : null
             );
         }
 

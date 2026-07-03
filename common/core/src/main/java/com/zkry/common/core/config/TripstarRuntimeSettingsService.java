@@ -14,17 +14,19 @@ public class TripstarRuntimeSettingsService {
     public TripstarRuntimeSettingsService(
         @Value("${tripstar.map.amap.key:}") String amapWebKey,
         @Value("${tripstar.content.xhs.cookie:}") String xhsCookie,
+        @Value("${tripstar.content.xhs.mode:service}") String xhsMode,
         @Value("${spring.ai.dashscope.api-key:}") String dashscopeApiKey,
         @Value("${spring.ai.dashscope.chat.options.model:qwen-plus}") String dashscopeModel
     ) {
-        settings.put("vite_amap_web_key", emptyToDefault(amapWebKey));
-        settings.put("vite_amap_web_js_key", "");
-        settings.put("google_maps_api_key", "");
-        settings.put("google_maps_proxy", "");
-        settings.put("xhs_cookie", emptyToDefault(xhsCookie));
-        settings.put("openai_api_key", emptyToDefault(dashscopeApiKey));
-        settings.put("openai_base_url", "");
-        settings.put("openai_model", emptyToDefault(dashscopeModel));
+        settings.put(TripstarSettingKeys.AMAP_WEB_KEY, emptyToDefault(amapWebKey));
+        settings.put(TripstarSettingKeys.AMAP_WEB_JS_KEY, "");
+        settings.put(TripstarSettingKeys.GOOGLE_MAPS_API_KEY, "");
+        settings.put(TripstarSettingKeys.GOOGLE_MAPS_PROXY, "");
+        settings.put(TripstarSettingKeys.XHS_COOKIE, emptyToDefault(xhsCookie));
+        settings.put(TripstarSettingKeys.XHS_MODE, emptyToDefault(xhsMode));
+        settings.put(TripstarSettingKeys.OPENAI_API_KEY, emptyToDefault(dashscopeApiKey));
+        settings.put(TripstarSettingKeys.OPENAI_BASE_URL, "");
+        settings.put(TripstarSettingKeys.OPENAI_MODEL, emptyToDefault(dashscopeModel));
     }
 
     public synchronized Map<String, Object> snapshot() {

@@ -1,11 +1,15 @@
 package com.zkry.content.service;
 
 import com.zkry.ai.service.AiAgentService;
+import com.zkry.ai.agent.TripstarAgent;
+import com.zkry.ai.prompt.TripstarPrompt;
+import com.zkry.ai.prompt.TripstarPromptVariable;
+import com.zkry.ai.service.AiStructuredOutputService;
 import com.zkry.common.core.config.TripstarRuntimeSettingsService;
+import com.zkry.common.core.config.TripstarSettingKeys;
+import com.zkry.common.core.constant.TravelDataSource;
 import com.zkry.common.core.exception.BizException;
-import com.zkry.ai.service.LlmJsonExtractor;
 import com.zkry.ai.service.PromptResourceService;
-import com.zkry.common.json.utils.JsonUtils;
 import com.zkry.content.dto.ContentAttractionCandidate;
 import com.zkry.content.dto.ContentCityContext;
 import com.zkry.content.dto.ContentCityRequest;
@@ -21,15 +25,22 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
 
+/**
+ * 小红书 service-first 采集实现。
+ *
+ * <p>这条链路对标 Python 版 TripStar：Java 先确定性地搜索笔记、拉详情、拼接正文，
+ * 再把真实游记文本交给 XhsExtractionAgent 做结构化提炼。它和 {@link XhsTravelTools}
+ * 的区别是：这里由 Java 主流程主动采集；Tool 类则把同样能力暴露给 ReactAgent 主动调用。
+ */
 @Service
 public class XhsContentService implements TravelContentService {
 
     private static final Logger log = LoggerFactory.getLogger(XhsContentService.class);
-    private static final String XHS_EXTRACTION_SYSTEM = "prompts/tripstar/xhs-extraction-system.md";
-    private static final String XHS_EXTRACTION_USER = "prompts/tripstar/xhs-extraction-user.md";
+    private static final String XSEC_SOURCE_PC_SEARCH = "pc_search";
 
     private final XhsNativeClient xhsNativeClient;
     private final AiAgentService aiAgentService;
+    private final AiStructuredOutputService structuredOutputService;
     private final PromptResourceService promptResourceService;
     private final TripstarRuntimeSettingsService runtimeSettingsService;
 
@@ -42,11 +53,13 @@ public class XhsContentService implements TravelContentService {
     public XhsContentService(
         XhsNativeClient xhsNativeClient,
         AiAgentService aiAgentService,
+        AiStructuredOutputService structuredOutputService,
         PromptResourceService promptResourceService,
         TripstarRuntimeSettingsService runtimeSettingsService
     ) {
         this.xhsNativeClient = xhsNativeClient;
         this.aiAgentService = aiAgentService;
+        this.structuredOutputService = structuredOutputService;
         this.promptResourceService = promptResourceService;
         this.runtimeSettingsService = runtimeSettingsService;
     }
@@ -64,7 +77,7 @@ public class XhsContentService implements TravelContentService {
         }
         if (requests == null || requests.isEmpty()) {
             log.info("[XHS] 城市请求为空，跳过游记搜索");
-            return ContentPlanningContext.empty("xhs", "没有城市信息，跳过小红书搜索。");
+            return ContentPlanningContext.empty(TravelDataSource.XHS, "没有城市信息，跳过小红书搜索。");
         }
 
         log.info("[XHS] 开始采集小红书游记 cityCount={} maxNotesPerCity={}", requests.size(), maxNotes);
@@ -77,7 +90,7 @@ public class XhsContentService implements TravelContentService {
                 cityContexts.add(new ContentCityContext(
                     request.city(),
                     request.keyword(),
-                    "xhs",
+                    TravelDataSource.XHS,
                     "",
                     List.of(),
                     ex.getMessage()
@@ -98,7 +111,7 @@ public class XhsContentService implements TravelContentService {
         return new ContentPlanningContext(
             cityContexts,
             hasData,
-            "xhs",
+            TravelDataSource.XHS,
             message
         );
     }
@@ -137,7 +150,7 @@ public class XhsContentService implements TravelContentService {
                 if (noteId.isBlank()) {
                     continue;
                 }
-                JsonNode detail = xhsNativeClient.noteDetail(cookie.get(), noteId, xsecToken, "pc_search");
+                JsonNode detail = xhsNativeClient.noteDetail(cookie.get(), noteId, xsecToken, XSEC_SOURCE_PC_SEARCH);
                 String photoUrl = firstPhoto(detail);
                 if (!photoUrl.isBlank()) {
                     log.info("[XHS] 图片搜索成功 keyword={} noteId={} elapsedMs={}",
@@ -158,7 +171,7 @@ public class XhsContentService implements TravelContentService {
      * 2. 拉取笔记详情正文；
      * 3. 合并正文交给 LLM 提炼景点候选。
      */
-    private ContentCityContext collectCity(String cookie, ContentCityRequest request) {
+    public ContentCityContext collectCity(String cookie, ContentCityRequest request) {
         String query = request.city() + " " + request.keyword() + " 旅游 景点攻略";
         long startedAt = System.currentTimeMillis();
         log.info("[XHS] 开始搜索城市游记 city={} keyword={} query={}", request.city(), request.keyword(), query);
@@ -183,7 +196,7 @@ public class XhsContentService implements TravelContentService {
                 if (!noteId.isBlank()) {
                     try {
                         log.debug("[XHS] 获取笔记详情 city={} noteId={} title={}", request.city(), noteId, truncate(title, 40));
-                        desc = noteDescription(xhsNativeClient.noteDetail(cookie, noteId, xsecToken, "pc_search"));
+                        desc = noteDescription(xhsNativeClient.noteDetail(cookie, noteId, xsecToken, XSEC_SOURCE_PC_SEARCH));
                     } catch (Exception ex) {
                         log.debug("[XHS] 小红书详情获取失败 noteId={} reason={}", noteId, ex.getMessage());
                     }
@@ -204,7 +217,7 @@ public class XhsContentService implements TravelContentService {
             return new ContentCityContext(
                 request.city(),
                 request.keyword(),
-                "xhs",
+                TravelDataSource.XHS,
                 "",
                 List.of(),
                 "未在小红书检索到关于 " + request.city() + " " + request.keyword() + " 的内容。"
@@ -217,41 +230,39 @@ public class XhsContentService implements TravelContentService {
         String message = candidates.isEmpty()
             ? "已采集小红书游记原文，LLM 提炼未启用或未成功。"
             : "已从小红书游记中提炼景点候选。";
-        return new ContentCityContext(request.city(), request.keyword(), "xhs", rawText, candidates, message);
+        return new ContentCityContext(request.city(), request.keyword(), TravelDataSource.XHS, rawText, candidates, message);
     }
 
-    private List<ContentAttractionCandidate> extractAttractions(ContentCityRequest request, String rawText) {
+    public List<ContentAttractionCandidate> extractAttractions(ContentCityRequest request, String rawText) {
         log.info("[XHS] 开始 LLM 提炼小红书景点 city={} rawLength={} aiAvailable={}",
             request.city(), rawText.length(), aiAgentService.isAvailable());
-        Optional<String> response = aiAgentService.call(
-            "xhs-extraction-agent",
-            promptResourceService.load(XHS_EXTRACTION_SYSTEM),
-            promptResourceService.render(XHS_EXTRACTION_USER, Map.of(
-                "city", request.city(),
-                "keyword", request.keyword(),
-                "language", request.safeLanguage(),
-                "raw_text", rawText
+        Optional<List<ContentAttractionCandidate>> candidates = structuredOutputService.callForType(
+            TripstarAgent.XHS_EXTRACTION,
+            new org.springframework.core.ParameterizedTypeReference<List<ContentAttractionCandidate>>() {
+            },
+            promptResourceService.load(TripstarPrompt.XHS_EXTRACTION_SYSTEM),
+            promptResourceService.render(TripstarPrompt.XHS_EXTRACTION_USER, Map.of(
+                TripstarPromptVariable.CITY, request.city(),
+                TripstarPromptVariable.KEYWORD, request.keyword(),
+                TripstarPromptVariable.LANGUAGE, request.safeLanguage(),
+                TripstarPromptVariable.RAW_TEXT, rawText,
+                TripstarPromptVariable.FORMAT, structuredOutputService.format(new org.springframework.core.ParameterizedTypeReference<List<ContentAttractionCandidate>>() {
+                })
             )),
             "xhs-extraction-" + request.city()
         );
-        if (response.isEmpty()) {
+        if (candidates.isEmpty()) {
             log.info("[XHS] LLM 未返回提炼结果 city={}", request.city());
             return List.of();
         }
-        List<String> candidatesJson = LlmJsonExtractor.extractJsonArrayCandidates(response.get());
-        log.info("[XHS] LLM 提炼返回 city={} responseLength={} jsonCandidates={}",
-            request.city(), response.get().length(), candidatesJson.size());
-        for (String json : candidatesJson) {
-            try {
-                List<ContentAttractionCandidate> candidates = JsonUtils.parseArray(json, ContentAttractionCandidate.class);
-                log.info("[XHS] LLM 提炼解析成功 city={} candidateCount={}", request.city(), candidates.size());
-                return candidates;
-            } catch (Exception ex) {
-                log.debug("[XHS] 小红书景点提炼 JSON 候选解析失败 reason={}", ex.getMessage());
-            }
-        }
-        log.warn("[XHS] LLM 提炼 JSON 解析失败 city={}", request.city());
-        return List.of();
+        log.info("[XHS] LLM 提炼解析成功 city={} candidateCount={}", request.city(), candidates.get().size());
+        return candidates.get();
+    }
+
+    public Optional<String> cookie() {
+        return runtimeSettingsService.stringValue(TripstarSettingKeys.XHS_COOKIE)
+            .map(XhsCookieUtils::normalize)
+            .filter(value -> !value.isBlank());
     }
 
     private String noteDescription(JsonNode detail) {
@@ -286,12 +297,6 @@ public class XhsContentService implements TravelContentService {
             }
         }
         return first.path("url_default").asText(first.path("url_pre").asText(first.path("url").asText("")));
-    }
-
-    private Optional<String> cookie() {
-        return runtimeSettingsService.stringValue("xhs_cookie")
-            .map(XhsCookieUtils::normalize)
-            .filter(value -> !value.isBlank());
     }
 
     private String failureMessage(List<ContentCityContext> cityContexts) {

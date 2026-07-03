@@ -1,4 +1,4 @@
-﻿
+
 spring:
   autoconfigure:
     exclude:
@@ -34,6 +34,8 @@ tripstar:
   content:
     xhs:
       enabled: ${XHS_ENABLED:true}
+      # service: Java service 先采集小红书；tool: ReactAgent 调用小红书工具；both: 两条链路都跑并合并，适合学习对比。
+      mode: ${XHS_MODE:tool}
       cookie: ${XHS_COOKIE:}
       base-url: ${XHS_BASE_URL:https://edith.xiaohongshu.com}
       # 第一阶段复用 Python 项目里的签名 JS 资产；后续可复制到 backend_java/resources 做独立部署。
@@ -76,4 +78,3 @@ mybatis-plus:
       logic-not-delete-value: 0
   configuration:
     map-underscore-to-camel-case: true
-

@@ -12,12 +12,8 @@
 6. budget.total 必须存在且大于 0。
 7. 不要因为风格问题失败，只检查结构和明显不可执行的问题。
 
-输出 JSON schema：
-{
-  "passed": true,
-  "issues": ["问题1"],
-  "suggestions": ["建议1"]
-}
+结构化输出格式：
+{{format}}
 
 TripPlan JSON：
 {{trip_plan_json}}

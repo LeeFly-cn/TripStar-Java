@@ -3,7 +3,9 @@ package com.zkry.api.trip;
 import com.zkry.common.json.utils.JsonUtils;
 import com.zkry.trip.dto.TripTaskEvent;
 import com.zkry.trip.service.TripTaskNotFoundException;
+import com.zkry.trip.service.TripTaskStage;
 import com.zkry.trip.service.TripTaskService;
+import com.zkry.trip.service.TripTaskStatus;
 import com.zkry.trip.service.TripTaskSubscription;
 import java.io.IOException;
 import java.net.URI;
@@ -111,15 +113,15 @@ public class TripTaskWebSocketHandler extends TextWebSocketHandler {
     }
 
     private boolean isFinal(TripTaskEvent event) {
-        return "completed".equals(event.status()) || "failed".equals(event.status());
+        return TripTaskStatus.COMPLETED.equals(event.status()) || TripTaskStatus.FAILED.equals(event.status());
     }
 
     private TripTaskEvent failedEvent(String taskId, String message) {
         return new TripTaskEvent(
             taskId,
             taskId,
-            "failed",
-            "failed",
+            TripTaskStatus.FAILED,
+            TripTaskStage.FAILED,
             100,
             message,
             message,

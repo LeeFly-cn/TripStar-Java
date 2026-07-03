@@ -9,27 +9,43 @@ import com.zkry.map.dto.MapPoi;
 import com.zkry.map.dto.MapWeatherForecast;
 import com.zkry.trip.dto.CityStay;
 import com.zkry.trip.dto.TripRequest;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+/**
+ * Trip Planner prompt 变量组装器。
+ *
+ * <p>Prompt 模板放在 resources 目录，这个类只负责把 Java DTO 整理成模型容易理解的
+ * 文本块。它是“真实数据 -> LLM 上下文”的桥梁：高德、小红书返回的是结构化对象，
+ * PlannerAgent 看到的是压缩后的候选景点、酒店、餐饮、天气和游记摘要。
+ */
 public final class TripPlannerPrompts {
-
-    public static final String PLANNER_SYSTEM = "prompts/tripstar/planner-system.md";
-    public static final String PLANNER_USER = "prompts/tripstar/planner-user.md";
-    public static final String REVIEW_SYSTEM = "prompts/tripstar/review-system.md";
-    public static final String REVIEW_USER = "prompts/tripstar/review-user.md";
-    public static final String JSON_REPAIR_SYSTEM = "prompts/tripstar/json-repair-system.md";
-    public static final String JSON_REPAIR_USER = "prompts/tripstar/json-repair-user.md";
 
     private TripPlannerPrompts() {
     }
 
+    /**
+     * PlannerAgent 使用的完整变量集合。
+     */
     public static Map<String, String> plannerVariables(
         TripRequest request,
         MapPlanningContext mapContext,
         ContentPlanningContext contentContext
     ) {
+        Map<String, String> variables = new LinkedHashMap<>(requestVariables(request));
+        variables.put("map_context", mapContextBlock(mapContext));
+        variables.put("content_context", contentContextBlock(contentContext));
+        return variables;
+    }
+
+    /**
+     * 用户请求基础变量。
+     *
+     * <p>ResearchAgent 和 PlannerAgent 都需要这些字段，因此单独抽出来复用。
+     */
+    public static Map<String, String> requestVariables(TripRequest request) {
         String cities = request.normalizedCities().stream()
             .map(city -> "- " + city.city() + ": " + city.safeDays() + "天")
             .collect(Collectors.joining("\n"));
@@ -39,8 +55,6 @@ public final class TripPlannerPrompts {
         String cityNames = request.normalizedCities().stream()
             .map(CityStay::city)
             .collect(Collectors.joining("、"));
-        String mapContextText = mapContextBlock(mapContext);
-        String contentContextText = contentContextBlock(contentContext);
 
         return Map.ofEntries(
             Map.entry("city_names", cityNames),
@@ -52,9 +66,7 @@ public final class TripPlannerPrompts {
             Map.entry("accommodation", request.safeAccommodation()),
             Map.entry("preferences", preferences),
             Map.entry("free_text_input", safe(request.free_text_input())),
-            Map.entry("language", request.safeLanguage()),
-            Map.entry("map_context", mapContextText),
-            Map.entry("content_context", contentContextText)
+            Map.entry("language", request.safeLanguage())
         );
     }
 

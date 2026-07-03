@@ -14,6 +14,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 把 PlannerAgent 返回的 {@link TripPlan} 包装成前端需要的响应结构。
+ *
+ * <p>前端图谱不是额外查询来的知识库数据，而是从行程 JSON 派生出来的展示图：
+ * 城市连接每天，每天再连接酒店、景点、餐饮和预算节点。这样前端能直接复用原 Vue
+ * 项目的知识图谱组件。
+ */
 final class TripPlanResponseFactory {
 
     private TripPlanResponseFactory() {
@@ -29,6 +36,9 @@ final class TripPlanResponseFactory {
         );
     }
 
+    /**
+     * 生成前端 ECharts/Graph 可用的节点和边。
+     */
     private static KnowledgeGraphData createKnowledgeGraph(TripPlan plan) {
         List<GraphCategory> categories = List.of(
             new GraphCategory("城市"),

@@ -1,5 +1,8 @@
 package com.zkry.api.chat;
 
+import com.zkry.ai.agent.TripstarAgent;
+import com.zkry.ai.prompt.TripstarPrompt;
+import com.zkry.ai.prompt.TripstarPromptVariable;
 import com.zkry.ai.service.AiAgentService;
 import com.zkry.ai.service.PromptResourceService;
 import com.zkry.common.core.exception.BizException;
@@ -18,8 +21,6 @@ import org.springframework.web.bind.annotation.RestController;
 public class ChatController {
 
     private static final Logger log = LoggerFactory.getLogger(ChatController.class);
-    private static final String CHAT_SYSTEM = "prompts/tripstar/chat-system.md";
-    private static final String CHAT_USER = "prompts/tripstar/chat-user.md";
 
     private final AiAgentService aiAgentService;
     private final PromptResourceService promptResourceService;
@@ -40,11 +41,11 @@ public class ChatController {
         log.info("[ChatAPI] 收到伴游问答 messageLength={} hasTripPlan={} aiAvailable={}",
             message.length(), tripPlan != null, aiAgentService.isAvailable());
         Optional<String> aiReply = aiAgentService.call(
-            "trip-chat-agent",
-            promptResourceService.load(CHAT_SYSTEM),
-            promptResourceService.render(CHAT_USER, Map.of(
-                "message", message,
-                "trip_plan", String.valueOf(tripPlan)
+            TripstarAgent.TRIP_CHAT,
+            promptResourceService.load(TripstarPrompt.CHAT_SYSTEM),
+            promptResourceService.render(TripstarPrompt.CHAT_USER, Map.of(
+                TripstarPromptVariable.MESSAGE, message,
+                TripstarPromptVariable.TRIP_PLAN, String.valueOf(tripPlan)
             )),
             "trip-chat"
         );

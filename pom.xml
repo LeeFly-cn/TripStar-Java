@@ -24,6 +24,7 @@
         <mybatis-plus.version>3.5.15</mybatis-plus.version>
         <lombok.version>1.18.42</lombok.version>
         <spring-ai-alibaba.version>2.0.0-M1.1</spring-ai-alibaba.version>
+        <spring-ai.version>2.0.0-M1</spring-ai.version>
 
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
@@ -77,6 +78,11 @@
                 <version>${spring-ai-alibaba.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-model</artifactId>
+                <version>${spring-ai.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
