@@ -394,16 +394,6 @@ npm run dev
 - [ ] 补充 Docker / Compose 独立部署
 - [ ] 面向用户端旅游规划产品继续扩展账号、收藏、历史行程和分享能力
 
-## 开源前安全提示
-
-提交 GitHub 前请确认：
-
-- 不提交 `.env`、`runtime_settings.json`、日志、构建产物和 `node_modules`。
-- 不提交 DashScope/OpenAI Key、高德 Key、小红书 Cookie。
-- 如果复制原 TripStar 前端，请检查 `frontend/dist` 是否被排除。
-- 如果复制小红书签名资产，请确认里面没有真实 Cookie 或个人账号信息。
-- 如果曾经误提交过密钥，请立即去对应平台轮换密钥；只删除文本不能保证密钥重新安全。
-
 ## 致谢
 
 本项目参考并学习了开源项目 [1sdv/TripStar](https://github.com/1sdv/TripStar) 的产品设计、前端交互和旅行规划思路。感谢原作者的开源分享。
