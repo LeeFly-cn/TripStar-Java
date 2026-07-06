@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.zkry</groupId>
+        <artifactId>common</artifactId>
+        <version>${revision}</version>
+    </parent>
+
+    <artifactId>redis</artifactId>
+
+    <dependencies>
+        <!--
+            依赖 common-json：
+            RedisTemplate 的对象序列化需要复用项目统一的 Jackson 时间格式和大数字处理规则。
+        -->
+        <dependency>
+            <groupId>com.zkry</groupId>
+            <artifactId>json</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!--
+            Spring Boot 官方 Redis Starter：
+            默认使用 Spring Data Redis，提供 RedisConnectionFactory、RedisTemplate、StringRedisTemplate 等基础能力。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+    </dependencies>
+</project>

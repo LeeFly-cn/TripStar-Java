@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.zkry</groupId>
+        <artifactId>common</artifactId>
+        <version>${revision}</version>
+    </parent>
+
+    <artifactId>satoken</artifactId>
+
+    <dependencies>
+        <!--
+            依赖 common-core：
+            1. Sa-Token 异常处理需要统一返回结构 R。
+            2. 鉴权异常需要复用 CommonErrorCode 中定义的 401/403 等错误码。
+        -->
+        <dependency>
+            <groupId>com.zkry</groupId>
+            <artifactId>core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!--
+            依赖 WebMVC：
+            SaTokenConfig 需要注册 Spring MVC 拦截器，统一保护 /api/** 路由。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc</artifactId>
+        </dependency>
+
+        <!--
+            Sa-Token Spring Boot 4 Starter：
+            提供登录态管理、鉴权注解、StpUtil、拦截器等认证授权基础能力。
+        -->
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-spring-boot4-starter</artifactId>
+        </dependency>
+    </dependencies>
+
+
+</project>
