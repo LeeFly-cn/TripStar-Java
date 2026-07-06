@@ -398,7 +398,7 @@ npm run dev
 
 本项目参考并学习了开源项目 [1sdv/TripStar](https://github.com/1sdv/TripStar) 的产品设计、前端交互和旅行规划思路。感谢原作者的开源分享。
 
-感谢 [linuxdo](https://linux.do/) 社区的交流、分享与反馈，让 TripStar Java 的学习和迭代更有方向。
+感谢 [linuxdo](https://linux.do/) 社区的交流、分享与反馈，让 TripStar Java 的迭代更高效，同时欢迎大家进群交流反馈。
 
 ## License
 
