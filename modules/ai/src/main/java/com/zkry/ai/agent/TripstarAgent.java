@@ -12,7 +12,6 @@ public enum TripstarAgent {
     TRAVEL_RESEARCH("travel-research-agent"),
     TRIP_PLANNER("trip-planner-agent"),
     TRIP_REVIEW("trip-review-agent"),
-    JSON_REPAIR("json-repair-agent"),
     TRIP_CHAT("trip-chat-agent");
 
     private final String id;

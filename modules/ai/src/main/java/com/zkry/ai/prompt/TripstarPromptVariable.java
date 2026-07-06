@@ -14,7 +14,6 @@ public final class TripstarPromptVariable {
     public static final String LANGUAGE = "language";
     public static final String RAW_TEXT = "raw_text";
     public static final String XHS_MODE = "xhs_mode";
-    public static final String RAW_RESPONSE = "raw_response";
     public static final String TRAVEL_DAYS = "travel_days";
     public static final String CITY_NAMES = "city_names";
     public static final String TRIP_PLAN_JSON = "trip_plan_json";

@@ -340,11 +340,13 @@ XhsToolNames
 XhsSignService
 ```
 
-它会调用 Python 项目里的签名 JS 资产：
+它默认调用 Java content 模块内置的签名 JS 资源：
 
 ```text
-../backend/app/services/xhs_sign/
+modules/content/src/main/resources/xhs_sign/
 ```
+
+默认配置是 `XHS_SIGN_DIR=classpath:xhs_sign`。由于 Node.js 的 `require()` 需要真实文件路径，`XhsSignService` 第一次签名时会把 classpath 里的 JS 文件抽取到临时目录，后续请求复用这个目录。日志里看到的 `signDir` 临时路径是正常现象。
 
 ## 7. ReactAgent 入口
 
@@ -442,7 +444,7 @@ ReviewResult
 List<ContentAttractionCandidate>
 ```
 
-旧的 `LlmJsonExtractor` 还保留在项目里，但主流程不再依赖它做复杂候选 JSON 提取。
+当前主线只有 Structured Output：模型输出不能被 `BeanOutputConverter` 转成 DTO 时，本次任务会明确失败并打印结构化解析日志。旧的手写 JSON 提取/修复路线已经删除。
 
 ## 9. PlannerAgent 和 ReviewAgent
 

@@ -107,24 +107,6 @@ public class TripAiPlannerService {
         return Optional.of(TripPlanResponseFactory.fromPlan(planId, normalized));
     }
 
-    private Optional<TripPlan> repairPlan(String planId, TripRequest request, String rawResponse) {
-        String systemPrompt = promptResourceService.load(TripstarPrompt.JSON_REPAIR_SYSTEM);
-        String userPrompt = promptResourceService.render(
-            TripstarPrompt.JSON_REPAIR_USER,
-            Map.of(
-                TripstarPromptVariable.RAW_RESPONSE, rawResponse == null ? "" : rawResponse,
-                TripstarPromptVariable.FORMAT, structuredOutputService.format(TripPlan.class)
-            )
-        );
-        return structuredOutputService.callForObject(
-            TripstarAgent.JSON_REPAIR,
-            TripPlan.class,
-            systemPrompt,
-            userPrompt,
-            planId + "-repair"
-        );
-    }
-
     private boolean reviewPlan(String planId, TripRequest request, TripPlan plan) {
         String systemPrompt = promptResourceService.load(TripstarPrompt.REVIEW_SYSTEM);
         String userPrompt = promptResourceService.render(

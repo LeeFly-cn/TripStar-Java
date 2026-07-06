@@ -2,6 +2,12 @@ HELP.md
 target/
 logs/
 *.log
+.env
+.env.local
+.env.*.local
+runtime_settings.json
+app/runtime_settings.json
+**/runtime_settings.json
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/

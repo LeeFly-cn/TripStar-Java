@@ -17,7 +17,6 @@ Vue 前端
   -> MapContextService 采集地图/POI/天气上下文
   -> XhsExtractionAgent 提炼游记景点候选
   -> TripPlannerAgent 生成 TripPlan JSON
-  -> JsonRepairAgent 修复不可解析 JSON
   -> TripReviewAgent 质检 TripPlan
   -> AI TripPlan 转 TripPlanResponse + graph_data
   -> 返回 TripPlanResponse(data + graph_data)
@@ -33,7 +32,6 @@ Vue 前端
 - `modules/ai/src/main/java/com/zkry/ai/service/AiAgentService.java`
 - `modules/ai/src/main/java/com/zkry/ai/service/AiTextService.java`
 - `modules/ai/src/main/java/com/zkry/ai/service/PromptResourceService.java`
-- `modules/ai/src/main/java/com/zkry/ai/service/LlmJsonExtractor.java`
 - `modules/content/src/main/java/com/zkry/content/service/XhsContentService.java`
 - `modules/content/src/main/java/com/zkry/content/service/XhsNativeClient.java`
 - `modules/content/src/main/java/com/zkry/content/service/XhsSignService.java`
@@ -87,7 +85,6 @@ XhsContentService
 
 TripAiPlannerService
   -> trip-planner-agent
-  -> json-repair-agent
   -> trip-review-agent
 
 ChatController
@@ -147,8 +144,6 @@ modules/ai/src/main/resources/prompts/tripstar/
 - `planner-user.md`
 - `review-system.md`
 - `review-user.md`
-- `json-repair-system.md`
-- `json-repair-user.md`
 - `chat-system.md`
 - `chat-user.md`
 
@@ -171,31 +166,37 @@ Planner Prompt 做了几件事：
 
 这是后续学习 LLM 应用的重点：**Prompt 不只是自然语言，它也是接口契约的一部分。**
 
-## 5. LLM JSON 解析与容错
+## 5. Structured Output 与容错
 
-LLM 经常会输出：
+当前主流程只保留 Spring AI `BeanOutputConverter` 这一条结构化输出路线。这样学习路径更清楚：所有需要结构化结果的 Agent 都走同一个解析入口。
 
-- markdown 包裹的 JSON
-- JSON 前后的解释文字
-- 截断 JSON
-- 字段缺失
-- 非法引号或多余符号
-
-当前 JSON 提取在：
+核心封装在：
 
 ```text
-modules/ai/src/main/java/com/zkry/ai/service/LlmJsonExtractor.java
+modules/ai/src/main/java/com/zkry/ai/service/AiStructuredOutputService.java
 ```
 
-它负责从模型文本中提取 JSON 对象或数组，并生成多个候选 JSON：
+调用方式是：
 
-- 去掉 markdown fence。
-- 清理 BOM、控制字符和常见中文弯引号。
-- 提取第一段平衡的 JSON 对象或数组。
-- 去掉对象/数组末尾多余逗号。
-- 尝试补齐截断时缺失的 `}` 或 `]`。
+```text
+structuredOutputService.format(TripPlan.class)
+  -> 把格式要求写入 prompt 的 {{format}}
 
-`TripAiPlannerService` 会逐个解析这些候选，只要有一个能转成 `TripPlan` 就成功。如果本地候选都解析失败，会调用 `json-repair-agent` 只修 JSON，而不是重新规划。
+structuredOutputService.callForObject(...)
+  -> 调用 ReactAgent
+  -> BeanOutputConverter 转成 Java DTO
+```
+
+现在主要结构化 DTO 是：
+
+```text
+TravelResearchResult
+TripPlan
+ReviewResult
+List<ContentAttractionCandidate>
+```
+
+如果模型输出不能转换成 DTO，`AiStructuredOutputService` 会记录 `[AI-STRUCTURED] 结构化输出解析失败`，上层返回明确失败。后续如果真要增加修复链路，建议单独设计成可观测、可测试的功能，而不是保留未使用代码。
 
 ## 6. 地图上下文如何进入规划
 
@@ -249,7 +250,7 @@ modules/content/src/main/java/com/zkry/content
 
 关键类：
 
-- `XhsSignService`：调用本地 Node.js 和旧 Python 项目里的签名 JS，生成小红书请求头。
+- `XhsSignService`：调用本地 Node.js 和 Java 项目内置的 `xhs_sign` JS 资源，生成小红书请求头。
 - `XhsNativeClient`：调用小红书搜索和详情接口。
 - `XhsContentService`：搜索游记、拼接正文、调用 LLM 提炼景点候选、提供景点搜图。
 - `TripstarRuntimeSettingsService`：承接前端设置页保存的 `xhs_cookie`、`vite_amap_web_key`、`openai_api_key`、`openai_model`，让运行时配置被内容、地图和 AI 服务共同读取。
@@ -357,14 +358,13 @@ TripTaskService
   -> AmapContextTool：补 POI、酒店、餐饮、天气、坐标
   -> PlannerAgent：融合用户需求和上下文，生成 TripPlan JSON
   -> ReviewAgent：检查天数、城市、酒店、餐饮、预算、字段完整性
-  -> RepairAgent：只修 JSON，不重新规划
   -> TripPlanResponseFactory：构建前端响应和 graph_data
 ```
 
 当前第一版多 Agent 是顺序工作流：
 
 ```text
-XhsExtractionAgent -> PlannerAgent -> ReviewAgent -> RepairAgent
+XhsExtractionAgent -> PlannerAgent -> ReviewAgent
 ```
 
 这一版最适合学习，因为每个 Agent 的职责很清楚：
@@ -372,7 +372,6 @@ XhsExtractionAgent -> PlannerAgent -> ReviewAgent -> RepairAgent
 - `XhsExtractionAgent` 学习非结构化内容提炼：小红书笔记 -> 景点候选 JSON。
 - `PlannerAgent` 学习复杂规划生成：用户需求 + 景点候选 + 地图上下文 -> 完整行程。
 - `ReviewAgent` 学习 LLM 质检：检查缺字段、天数不一致、城市不一致、预算异常。
-- `RepairAgent` 学习 JSON 修复：只修格式，不新增旅行内容。
 
 下一版可以引入工具和并行：
 
@@ -516,5 +515,5 @@ POI 实体：来自高德/Google
 2. 验证 `XhsContentService` 能搜索笔记、拉详情并提炼景点。
 3. 验证 `AmapMapContextService` 能返回 POI、酒店、餐饮、天气。
 4. 同时启用小红书 + 高德 + AI，验证 `TripAiPlannerService` 能稳定生成 `TripPlan`。
-5. 加一层 JSON repair Agent：本地候选都解析失败时，让 LLM 只修 JSON。
+5. 继续观察 Structured Output 失败日志，必要时再单独设计可测试的修复链路。
 6. 再引入 Tool callback、并行 Agent 和 Supervisor 编排。

@@ -11,11 +11,11 @@
     </parent>
 
     <groupId>com.zkry</groupId>
-    <artifactId>backend</artifactId>
+    <artifactId>tripstar-java</artifactId>
     <version>${revision}</version>
 
-    <name>backend</name>
-    <description>backend</description>
+    <name>TripStar Java</name>
+    <description>Java implementation of TripStar powered by Spring Boot and Spring AI Alibaba</description>
 
     <properties>
         <revision>0.0.1-SNAPSHOT</revision>

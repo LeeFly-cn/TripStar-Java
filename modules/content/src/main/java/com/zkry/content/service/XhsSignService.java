@@ -2,17 +2,20 @@ package com.zkry.content.service;
 
 import com.zkry.common.json.utils.JsonUtils;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
+import java.nio.file.StandardCopyOption;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
 
@@ -20,22 +23,29 @@ import tools.jackson.databind.JsonNode;
 public class XhsSignService {
 
     private static final Logger log = LoggerFactory.getLogger(XhsSignService.class);
+    private static final String CLASSPATH_PREFIX = "classpath:";
+    private static final String DEFAULT_CLASSPATH_SIGN_DIR = "xhs_sign";
+    private static final String MAIN_SIGN_FILE = "xhs_xs_xsc_56.js";
+    private static final List<String> SIGN_RESOURCE_FILES = List.of(
+        MAIN_SIGN_FILE,
+        "xhs_xray.js",
+        "xhs_xray_pack1.js",
+        "xhs_xray_pack2.js"
+    );
 
     @Value("${tripstar.content.xhs.node-command:node}")
     private String nodeCommand;
 
-    @Value("${tripstar.content.xhs.sign-dir:../backend/app/services/xhs_sign}")
+    @Value("${tripstar.content.xhs.sign-dir:classpath:xhs_sign}")
     private String signDir;
 
     @Value("${tripstar.content.xhs.sign-timeout-seconds:15}")
     private long timeoutSeconds;
 
+    private volatile Path extractedClasspathSignDir;
+
     public SignedRequest sign(String cookie, String api, Map<String, Object> data, String method) {
-        Path resolvedSignDir = Path.of(signDir).toAbsolutePath().normalize();
-        if (!Files.exists(resolvedSignDir.resolve("xhs_xs_xsc_56.js"))) {
-            log.warn("[XHS-SIGN] 签名文件不存在 signDir={} api={}", resolvedSignDir, api);
-            throw new XhsCookieExpiredException("小红书签名文件不存在: " + resolvedSignDir);
-        }
+        Path resolvedSignDir = resolveSignDir(api);
 
         String payload = data == null ? "" : JsonUtils.toJsonString(data);
         String encodedCookie = base64(cookie == null ? "" : cookie);
@@ -118,7 +128,7 @@ public class XhsSignService {
     }
 
     /**
-     * 通过 Node.js 复用 Python 版项目里的小红书签名资产。
+     * 通过 Node.js 执行项目内置的小红书签名资产。
      *
      * <p>这里刻意只打印路径、耗时和长度，不打印 Cookie、x-s 等敏感签名值。
      */
@@ -184,6 +194,80 @@ public class XhsSignService {
             };
             process.stdout.write(JSON.stringify({ headers, body: bodyText }));
             """;
+    }
+
+    private Path resolveSignDir(String api) {
+        String configured = signDir == null ? "" : signDir.trim();
+        if (configured.isBlank() || configured.startsWith(CLASSPATH_PREFIX)) {
+            String resourceDir = configured.isBlank()
+                ? DEFAULT_CLASSPATH_SIGN_DIR
+                : configured.substring(CLASSPATH_PREFIX.length());
+            return extractClasspathSignDir(normalizeResourceDir(resourceDir), api);
+        }
+
+        Path resolved = Path.of(configured).toAbsolutePath().normalize();
+        if (!Files.exists(resolved.resolve(MAIN_SIGN_FILE))) {
+            log.warn("[XHS-SIGN] 签名文件不存在 signDir={} api={}", resolved, api);
+            throw new XhsCookieExpiredException("小红书签名文件不存在: " + resolved);
+        }
+        return resolved;
+    }
+
+    private String normalizeResourceDir(String resourceDir) {
+        String normalized = resourceDir == null || resourceDir.isBlank()
+            ? DEFAULT_CLASSPATH_SIGN_DIR
+            : resourceDir.replace('\\', '/');
+        while (normalized.startsWith("/")) {
+            normalized = normalized.substring(1);
+        }
+        return normalized.endsWith("/") ? normalized.substring(0, normalized.length() - 1) : normalized;
+    }
+
+    /**
+     * Classpath 资源在 jar 内不是普通目录，Node.js 的 require 无法直接读取。
+     *
+     * <p>第一次签名时把必要 JS 文件抽取到临时目录，后续请求复用同一目录。
+     */
+    private Path extractClasspathSignDir(String resourceDir, String api) {
+        Path cached = extractedClasspathSignDir;
+        if (cached != null && Files.exists(cached.resolve(MAIN_SIGN_FILE))) {
+            return cached;
+        }
+
+        synchronized (this) {
+            cached = extractedClasspathSignDir;
+            if (cached != null && Files.exists(cached.resolve(MAIN_SIGN_FILE))) {
+                return cached;
+            }
+            try {
+                Path targetDir = Files.createTempDirectory("tripstar-xhs-sign-assets-").toAbsolutePath().normalize();
+                targetDir.toFile().deleteOnExit();
+                for (String fileName : SIGN_RESOURCE_FILES) {
+                    copySignResource(resourceDir, fileName, targetDir);
+                }
+                extractedClasspathSignDir = targetDir;
+                log.info("[XHS-SIGN] 已抽取内置签名资源 resourceDir={} targetDir={} fileCount={} api={}",
+                    resourceDir, targetDir, SIGN_RESOURCE_FILES.size(), api);
+                return targetDir;
+            } catch (IOException ex) {
+                log.warn("[XHS-SIGN] 抽取内置签名资源失败 resourceDir={} api={} reason={}",
+                    resourceDir, api, ex.getMessage());
+                throw new XhsCookieExpiredException("小红书内置签名资源抽取失败，请检查 xhs_sign 资源文件", ex);
+            }
+        }
+    }
+
+    private void copySignResource(String resourceDir, String fileName, Path targetDir) throws IOException {
+        String resourcePath = resourceDir + "/" + fileName;
+        ClassPathResource resource = new ClassPathResource(resourcePath);
+        if (!resource.exists()) {
+            throw new IOException("classpath resource not found: " + resourcePath);
+        }
+        Path targetFile = targetDir.resolve(fileName);
+        try (InputStream inputStream = resource.getInputStream()) {
+            Files.copy(inputStream, targetFile, StandardCopyOption.REPLACE_EXISTING);
+        }
+        targetFile.toFile().deleteOnExit();
     }
 
     public record SignedRequest(

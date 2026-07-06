@@ -10,8 +10,6 @@ public final class TripstarPrompt {
     public static final String PLANNER_USER = "prompts/tripstar/planner-user.md";
     public static final String REVIEW_SYSTEM = "prompts/tripstar/review-system.md";
     public static final String REVIEW_USER = "prompts/tripstar/review-user.md";
-    public static final String JSON_REPAIR_SYSTEM = "prompts/tripstar/json-repair-system.md";
-    public static final String JSON_REPAIR_USER = "prompts/tripstar/json-repair-user.md";
     public static final String CHAT_SYSTEM = "prompts/tripstar/chat-system.md";
     public static final String CHAT_USER = "prompts/tripstar/chat-user.md";
 
