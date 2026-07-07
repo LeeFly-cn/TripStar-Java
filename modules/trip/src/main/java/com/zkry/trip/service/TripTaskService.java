@@ -141,8 +141,12 @@ public class TripTaskService {
             pause();
             update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.INITIALIZING, 10, TripTaskMessages.INITIALIZING, null, null);
             pause();
-            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.TRAVEL_RESEARCH, 24, TripTaskMessages.TRAVEL_RESEARCH, null, null);
-            TripResearchService.ResearchContext researchContext = tripResearchService.research(taskId, request);
+            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.TRAVEL_RESEARCH, 16, TripTaskMessages.TRAVEL_RESEARCH, null, null);
+            TripResearchService.ResearchContext researchContext = tripResearchService.research(
+                taskId,
+                request,
+                (stage, progress, message) -> update(taskId, TripTaskStatus.PROCESSING, stage, progress, message, null, null)
+            );
             ContentPlanningContext contentContext = researchContext.contentContext();
             MapPlanningContext mapContext = researchContext.mapContext();
             log.info("[TripTask] 资料研究阶段完成 taskId={} mapRealData={} mapCities={} contentRealData={} contentCities={} summary={}",
@@ -158,10 +162,6 @@ public class TripTaskService {
             if (!contentContext.realData()) {
                 throw new BizException("小红书内容采集失败：" + contentContext.message());
             }
-            pause();
-            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.WEATHER_SEARCH, 46, mapStageMessage(mapContext, "天气"), null, null);
-            pause();
-            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.HOTEL_SEARCH, 64, mapStageMessage(mapContext, "酒店和餐饮"), null, null);
             pause();
             update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.PLANNING, 85, TripTaskMessages.PLANNING, null, null);
             TripPlanResponse response = tripAiPlannerService.plan(taskId, request, mapContext, contentContext)
@@ -219,13 +219,6 @@ public class TripTaskService {
             log.warn("[TripTask] 运行时配置校验失败 missing={}", missing);
             throw new BizException(message);
         }
-    }
-
-    private String mapStageMessage(MapPlanningContext mapContext, String subject) {
-        if (mapContext.realData()) {
-            return "已获取地图" + subject + "上下文，正在整理给规划智能体...";
-        }
-        return mapContext.message() + " 正在继续准备" + subject + "候选信息。";
     }
 
     /**

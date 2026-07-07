@@ -117,7 +117,7 @@ public class XhsNativeClient {
                 if ("300011".equals(code) || msg.contains("异常") || msg.contains("登录")) {
                     throw new XhsCookieExpiredException("小红书 Cookie 已失效或被风控拦截 (code=" + code + "): " + msg);
                 }
-                throw new XhsCookieExpiredException("小红书接口返回失败 (code=" + code + "): " + msg);
+                throw new XhsApiException(code, msg);
             }
             log.debug("[XHS-API] 接口调用成功 api={} hasData={}", api, !root.path("data").isMissingNode());
             return root;

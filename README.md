@@ -140,9 +140,10 @@ sequenceDiagram
     participant API as "TripController"
     participant Task as "TripTaskService"
     participant Research as "TripResearchService"
-    participant Agent as "TravelResearchAgent(ReactAgent)"
-    participant AMap as "AmapTravelTools"
-    participant XHS as "XhsTravelTools / XhsContentService"
+    participant XHSAgent as "XhsSearch/DetailAgent"
+    participant AMapAgent as "AmapPoi/Weather/HotelAgent"
+    participant XHS as "XhsSearchTools / XhsDetailTools / XhsContentService"
+    participant AMap as "Amap*Tools"
     participant Planner as "TripAiPlannerService"
     participant SO as "AiStructuredOutputService"
     participant Graph as "TripPlanResponseFactory"
@@ -152,14 +153,17 @@ sequenceDiagram
     Task-->>Vue: task_id, status_url, ws_url
     Vue->>Task: WebSocket /api/trip/ws/{taskId}
 
-    Task->>Research: research(taskId, request)
-    Research->>Agent: 调用资料研究智能体
-    Agent->>AMap: 查询 POI / 酒店 / 餐饮 / 天气 / 坐标
-    Agent->>XHS: 搜索小红书游记 / 提取笔记内容
-    XHS-->>Agent: 游记摘要、景点候选、图片线索
-    AMap-->>Agent: 地图、天气、POI 上下文
-    Agent->>SO: Structured Output 转 TravelResearchReport
+    Task->>Research: research(taskId, request, progressReporter)
+    Research->>XHSAgent: 小红书搜索/详情阶段
+    XHSAgent->>XHS: xhs_search_notes / xhs_note_detail
+    XHS-->>XHSAgent: 游记正文、景点候选、图片线索
+    XHSAgent->>SO: Structured Output 转 ContentPlanningContext
+    Research->>AMapAgent: 高德 POI / 天气 / 酒店阶段
+    AMapAgent->>AMap: amap_geocode / poi / weather / hotel
+    AMap-->>AMapAgent: 地图、天气、POI 上下文
+    AMapAgent->>SO: Structured Output 转 MapPlanningContext
     SO-->>Research: 结构化资料研究结果
+    Research-->>Task: 合并后的 MapPlanningContext + ContentPlanningContext
 
     Task->>Planner: plan(taskId, request, mapContext, contentContext)
     Planner->>SO: Structured Output 转 TripPlanResponse
@@ -340,12 +344,12 @@ npm run dev
 1. `app/src/main/java/com/zkry/api/trip/TripController.java`：看前端请求如何进入后端。
 2. `modules/trip/src/main/java/com/zkry/trip/service/TripTaskService.java`：看异步任务、进度状态和 WebSocket 推送。
 3. `modules/trip/src/main/java/com/zkry/trip/service/TripResearchService.java`：看资料研究阶段如何组合 service/tool/both。
-4. `modules/map/src/main/java/com/zkry/map/service/AmapTravelTools.java`：看高德能力如何暴露给 Agent。
-5. `modules/content/src/main/java/com/zkry/content/service/XhsTravelTools.java`：看小红书能力如何暴露给 Agent。
+4. `modules/map/src/main/java/com/zkry/map/service/AmapGeoPoiTools.java` / `AmapWeatherTools.java` / `AmapHotelTools.java`：看高德阶段工具白名单。
+5. `modules/content/src/main/java/com/zkry/content/service/XhsSearchTools.java` / `XhsDetailTools.java`：看小红书阶段工具白名单。
 6. `modules/ai/src/main/java/com/zkry/ai/service/AiAgentService.java`：看 ReactAgent 的统一调用入口。
 7. `modules/ai/src/main/java/com/zkry/ai/service/AiStructuredOutputService.java`：看 Structured Output 如何把 LLM 输出转 DTO。
 8. `modules/trip/src/main/java/com/zkry/trip/service/TripAiPlannerService.java`：看最终路线规划和质检如何执行。
-9. `modules/trip/src/main/java/com/zkry/trip/service/TripPlanResponseFactory.java`：看知识图谱和兜底结构如何组装。
+9. `modules/trip/src/main/java/com/zkry/trip/service/TripPlanResponseFactory.java`：看知识图谱结果结构如何组装。
 
 配套文档：
 

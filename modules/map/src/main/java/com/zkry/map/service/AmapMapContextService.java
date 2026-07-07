@@ -2,12 +2,8 @@ package com.zkry.map.service;
 
 import com.zkry.common.core.config.TripstarRuntimeSettingsService;
 import com.zkry.common.core.config.TripstarSettingKeys;
-import com.zkry.common.core.constant.TravelDataSource;
 import com.zkry.common.core.exception.BizException;
 import com.zkry.common.json.utils.JsonUtils;
-import com.zkry.map.dto.MapCityContext;
-import com.zkry.map.dto.MapCityRequest;
-import com.zkry.map.dto.MapPlanningContext;
 import com.zkry.map.dto.MapPoi;
 import com.zkry.map.dto.MapPoint;
 import com.zkry.map.dto.MapWeatherForecast;
@@ -33,15 +29,14 @@ import tools.jackson.databind.JsonNode;
 /**
  * 高德 REST API 访问层。
  *
- * <p>这里放确定性、可测试的 HTTP 能力：地理编码、POI、天气。上层既可以通过
- * {@link MapContextService#collect(List)} 直接采集，也可以通过 {@link AmapTravelTools}
+ * <p>这里放确定性、可测试的 HTTP 能力：地理编码、POI、天气。上层通过
+ * {@link AmapGeoPoiTools}、{@link AmapWeatherTools} 和 {@link AmapHotelTools}
  * 暴露给 ReactAgent 调用。这样 Tool 只是“外壳”，不会复制一套高德请求逻辑。
  */
 @Service
-public class AmapMapContextService implements MapContextService {
+public class AmapMapContextService {
 
     private static final Logger log = LoggerFactory.getLogger(AmapMapContextService.class);
-    private static final int DEFAULT_LIMIT = 5;
 
     private final HttpClient httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(4))
@@ -58,65 +53,6 @@ public class AmapMapContextService implements MapContextService {
 
     @Value("${tripstar.map.amap.base-url:https://restapi.amap.com}")
     private String baseUrl;
-
-    @Override
-    public MapPlanningContext collect(List<MapCityRequest> cityRequests) {
-        validateReady();
-        if (cityRequests == null || cityRequests.isEmpty()) {
-            log.info("[AMap] 城市请求为空，跳过地图上下文采集");
-            return MapPlanningContext.empty(TravelDataSource.AMAP, "没有城市信息，地图上下文跳过。");
-        }
-
-        long startedAt = System.currentTimeMillis();
-        log.info("[AMap] 开始采集地图上下文 cityCount={}", cityRequests.size());
-        List<MapCityContext> contexts = new ArrayList<>();
-        for (MapCityRequest cityRequest : cityRequests) {
-            try {
-                contexts.add(collectCity(cityRequest));
-            } catch (Exception ex) {
-                log.warn("高德地图上下文采集失败 city={}, reason={}", cityRequest.city(), ex.getMessage());
-            }
-        }
-
-        boolean hasData = contexts.stream().anyMatch(MapCityContext::hasAnyData);
-        String message = hasData ? "已采集高德地图 POI、酒店、餐饮和天气上下文。" : "高德地图未返回有效上下文，请检查 Key 权限、城市名或接口配额。";
-        log.info("[AMap] 地图上下文采集结束 realData={} cityContexts={} elapsedMs={}",
-            hasData, contexts.size(), System.currentTimeMillis() - startedAt);
-        return new MapPlanningContext(contexts, hasData, TravelDataSource.AMAP, message);
-    }
-
-    /**
-     * 单城市地图上下文采集：地理编码 -> 景点 POI -> 酒店 POI -> 餐饮 POI -> 天气。
-     *
-     * <p>这些数据会被写进规划 prompt，帮助 LLM 生成更像真实旅行助手的路线和提醒。
-     */
-    public MapCityContext collectCity(MapCityRequest request) throws IOException, InterruptedException {
-        validateReady();
-        long startedAt = System.currentTimeMillis();
-        log.info("[AMap] 开始采集城市地图上下文 city={} days={} preferences={} accommodation={}",
-            request.city(), request.days(), request.safePreferences(), request.accommodation());
-        GeocodeResult geocode = geocode(request.city());
-        List<MapPoi> attractions = searchPois(request.city(), attractionKeywords(request), DEFAULT_LIMIT);
-        List<MapPoi> hotels = searchPois(request.city(), hotelKeywords(request), DEFAULT_LIMIT);
-        List<MapPoi> restaurants = searchPois(request.city(), request.city() + " 特色美食", DEFAULT_LIMIT);
-        List<MapWeatherForecast> weatherForecasts = weatherForecasts(request.city(), geocode.adcode());
-        log.info("[AMap] 城市地图上下文完成 city={} center={} attractions={} hotels={} restaurants={} weather={} elapsedMs={}",
-            request.city(),
-            geocode.point() == null ? "-" : geocode.point().longitude() + "," + geocode.point().latitude(),
-            attractions.size(),
-            hotels.size(),
-            restaurants.size(),
-            weatherForecasts.size(),
-            System.currentTimeMillis() - startedAt);
-        return new MapCityContext(
-            request.city(),
-            geocode.point(),
-            attractions,
-            hotels,
-            restaurants,
-            weatherForecasts
-        );
-    }
 
     public GeocodeResult geocode(String city) throws IOException, InterruptedException {
         validateReady();
@@ -236,12 +172,15 @@ public class AmapMapContextService implements MapContextService {
             response.body() == null ? 0 : response.body().length());
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             log.warn("[AMap] HTTP 状态异常 path={} status={}", path, response.statusCode());
-            return JsonUtils.getObjectMapper().createObjectNode();
+            throw new BizException("高德 HTTP 状态异常 path=" + path + " status=" + response.statusCode());
         }
         JsonNode root = JsonUtils.getObjectMapper().readTree(response.body());
         if ("0".equals(root.path("status").asText(""))) {
             log.warn("[AMap] 业务状态失败 path={} infocode={} info={}",
                 path, text(root.path("infocode")), text(root.path("info")));
+            throw new BizException("高德接口返回失败 path=" + path
+                + " infocode=" + text(root.path("infocode"))
+                + " info=" + text(root.path("info")));
         }
         return root;
     }
@@ -269,21 +208,6 @@ public class AmapMapContextService implements MapContextService {
             log.warn("[AMap] 高德地图 Web Service Key 未配置");
             throw new BizException("高德地图 Web Service Key 未配置，请先在设置页填写“高德地图 Web Service Key”。");
         }
-    }
-
-    private String attractionKeywords(MapCityRequest request) {
-        String preferenceKeyword = request.safePreferences().stream()
-            .filter(preference -> preference != null && !preference.isBlank())
-            .findFirst()
-            .orElse("景点");
-        return request.city() + " " + preferenceKeyword;
-    }
-
-    private String hotelKeywords(MapCityRequest request) {
-        String accommodation = request.accommodation() == null || request.accommodation().isBlank()
-            ? "酒店"
-            : request.accommodation();
-        return request.city() + " " + accommodation;
     }
 
     private MapPoint parsePoint(String location) {

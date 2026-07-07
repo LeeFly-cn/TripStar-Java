@@ -13,7 +13,6 @@ public final class AmapToolNames {
     public static final String HOTEL_SEARCH = "amap_hotel_search";
     public static final String RESTAURANT_SEARCH = "amap_restaurant_search";
     public static final String WEATHER = "amap_weather";
-    public static final String COLLECT_CITY_CONTEXT = "amap_collect_city_context";
 
     private AmapToolNames() {
     }

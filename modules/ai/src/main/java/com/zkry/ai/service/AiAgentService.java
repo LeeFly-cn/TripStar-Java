@@ -38,8 +38,8 @@ public class AiAgentService {
     /**
      * 调用一个可带 methodTools 的 ReactAgent。
      *
-     * <p>工具对象来自 Spring Bean，例如 {@code AmapTravelTools}、
-     * {@code XhsTravelTools}。ReactAgent 会根据提示词和用户需求自行决定调用哪个
+     * <p>工具对象来自 Spring Bean，例如 {@code AmapGeoPoiTools}、
+     * {@code XhsSearchTools}。ReactAgent 会根据提示词和用户需求自行决定调用哪个
      * {@code @Tool} 方法。
      */
     public Optional<String> call(
@@ -112,7 +112,8 @@ public class AiAgentService {
                 agentName,
                 threadId == null || threadId.isBlank() ? agentName : threadId,
                 System.currentTimeMillis() - startedAt,
-                ex.getMessage());
+                ex.getMessage(),
+                ex);
             return Optional.empty();
         }
     }

@@ -76,31 +76,18 @@ public class XhsContentService implements TravelContentService {
             throw new BizException("小红书 Cookie 未配置，请先在设置页填写“小红书 Cookie”。");
         }
         if (requests == null || requests.isEmpty()) {
-            log.info("[XHS] 城市请求为空，跳过游记搜索");
-            return ContentPlanningContext.empty(TravelDataSource.XHS, "没有城市信息，跳过小红书搜索。");
+            log.warn("[XHS] 城市请求为空，无法采集小红书游记");
+            throw new BizException("城市请求为空，无法采集小红书游记。");
         }
 
         log.info("[XHS] 开始采集小红书游记 cityCount={} maxNotesPerCity={}", requests.size(), maxNotes);
         List<ContentCityContext> cityContexts = new ArrayList<>();
         for (ContentCityRequest request : requests) {
-            try {
-                cityContexts.add(collectCity(cookie.get(), request));
-            } catch (XhsCookieExpiredException ex) {
-                log.warn("[XHS] 小红书采集失败 city={} reason={}", request.city(), ex.getMessage());
-                cityContexts.add(new ContentCityContext(
-                    request.city(),
-                    request.keyword(),
-                    TravelDataSource.XHS,
-                    "",
-                    List.of(),
-                    ex.getMessage()
-                ));
-            } catch (Exception ex) {
-                log.warn("[XHS] 小红书采集异常 city={} reason={}", request.city(), ex.getMessage());
-            }
+            cityContexts.add(collectCity(cookie.get(), request));
         }
 
-        boolean hasData = cityContexts.stream().anyMatch(ContentCityContext::hasAnyData);
+        boolean hasData = cityContexts.size() == requests.size()
+            && cityContexts.stream().allMatch(ContentCityContext::hasAnyData);
         log.info("[XHS] 小红书游记采集结束 realData={} cityContexts={} extractedCandidates={}",
             hasData,
             cityContexts.size(),
@@ -133,23 +120,23 @@ public class XhsContentService implements TravelContentService {
         }
         long startedAt = System.currentTimeMillis();
         log.info("[XHS] 开始搜索景点图片 keyword={}", keyword);
-        try {
-            JsonNode search = xhsNativeClient.searchNotes(cookie.get(), keyword, 1, 0, 20);
-            JsonNode items = search.path("data").path("items");
-            if (!items.isArray()) {
-                log.info("[XHS] 图片搜索结果不是数组 keyword={} elapsedMs={}", keyword, System.currentTimeMillis() - startedAt);
-                return "";
+        JsonNode search = xhsNativeClient.searchNotes(cookie.get(), keyword, 1, 0, 20);
+        JsonNode items = search.path("data").path("items");
+        if (!items.isArray()) {
+            log.info("[XHS] 图片搜索结果不是数组 keyword={} elapsedMs={}", keyword, System.currentTimeMillis() - startedAt);
+            return "";
+        }
+        log.info("[XHS] 图片搜索返回笔记候选 keyword={} count={}", keyword, items.size());
+        for (JsonNode item : items) {
+            if (!"note".equals(item.path("model_type").asText(""))) {
+                continue;
             }
-            log.info("[XHS] 图片搜索返回笔记候选 keyword={} count={}", keyword, items.size());
-            for (JsonNode item : items) {
-                if (!"note".equals(item.path("model_type").asText(""))) {
-                    continue;
-                }
-                String noteId = item.path("id").asText("");
-                String xsecToken = item.path("xsec_token").asText("");
-                if (noteId.isBlank()) {
-                    continue;
-                }
+            String noteId = XhsNoteJsons.noteId(item);
+            String xsecToken = XhsNoteJsons.xsecToken(item);
+            if (noteId.isBlank()) {
+                continue;
+            }
+            try {
                 JsonNode detail = xhsNativeClient.noteDetail(cookie.get(), noteId, xsecToken, XSEC_SOURCE_PC_SEARCH);
                 String photoUrl = firstPhoto(detail);
                 if (!photoUrl.isBlank()) {
@@ -157,9 +144,11 @@ public class XhsContentService implements TravelContentService {
                         keyword, noteId, System.currentTimeMillis() - startedAt);
                     return photoUrl;
                 }
+            } catch (XhsCookieExpiredException ex) {
+                throw ex;
+            } catch (Exception ex) {
+                log.debug("[XHS] 图片候选详情失败 keyword={} noteId={} reason={}", keyword, noteId, ex.getMessage());
             }
-        } catch (Exception ex) {
-            log.warn("[XHS] 小红书图片搜索失败 keyword={} reason={}", keyword, ex.getMessage());
         }
         log.info("[XHS] 图片搜索未找到可用图片 keyword={} elapsedMs={}", keyword, System.currentTimeMillis() - startedAt);
         return "";
@@ -188,20 +177,23 @@ public class XhsContentService implements TravelContentService {
                 if (!"note".equals(item.path("model_type").asText(""))) {
                     continue;
                 }
-                String noteId = item.path("id").asText("");
-                String xsecToken = item.path("xsec_token").asText("");
+                String noteId = XhsNoteJsons.noteId(item);
+                String xsecToken = XhsNoteJsons.xsecToken(item);
                 JsonNode noteCard = item.path("note_card");
-                String title = noteCard.path("display_title").asText("");
+                String title = XhsNoteJsons.title(noteCard);
                 String desc = "";
                 if (!noteId.isBlank()) {
                     try {
                         log.debug("[XHS] 获取笔记详情 city={} noteId={} title={}", request.city(), noteId, truncate(title, 40));
                         desc = noteDescription(xhsNativeClient.noteDetail(cookie, noteId, xsecToken, XSEC_SOURCE_PC_SEARCH));
+                    } catch (XhsCookieExpiredException ex) {
+                        throw ex;
                     } catch (Exception ex) {
-                        log.debug("[XHS] 小红书详情获取失败 noteId={} reason={}", noteId, ex.getMessage());
+                        log.warn("[XHS] 小红书详情获取失败 city={} noteId={} title={} reason={}",
+                            request.city(), noteId, truncate(title, 50), ex.getMessage());
                     }
                 }
-                if (!title.isBlank() || !desc.isBlank()) {
+                if (!desc.isBlank()) {
                     count++;
                     log.info("[XHS] 采集到游记正文 city={} index={} noteId={} title={} descLength={}",
                         request.city(), count, noteId, truncate(title, 50), desc.length());

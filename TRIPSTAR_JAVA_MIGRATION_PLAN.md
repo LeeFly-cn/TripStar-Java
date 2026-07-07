@@ -132,7 +132,7 @@ $env:XHS_COOKIE='你的小红书网页端 Cookie'
   "task_id": "abc123",
   "plan_id": "abc123",
   "status": "processing|completed|failed",
-  "stage": "submitted|initializing|attraction_search|weather_search|hotel_search|planning|graph_building|completed|failed",
+  "stage": "submitted|initializing|travel_research|xhs_search|xhs_detail|amap_poi_search|weather_search|hotel_search|research_merge|planning|graph_building|completed|failed",
   "progress": 0,
   "message": "正在处理...",
   "error": "",
@@ -239,9 +239,13 @@ $env:XHS_COOKIE='你的小红书网页端 Cookie'
 - 实现进度阶段：
   - `submitted`
   - `initializing`
-  - `attraction_search`
+  - `travel_research`
+  - `xhs_search`
+  - `xhs_detail`
+  - `amap_poi_search`
   - `weather_search`
   - `hotel_search`
+  - `research_merge`
   - `planning`
   - `graph_building`
   - `completed`

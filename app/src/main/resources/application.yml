@@ -11,8 +11,8 @@ spring:
     active: dev
   ai:
     dashscope:
-      enabled: ${AI_DASHSCOPE_ENABLED:false}
-      api-key: ${AI_DASHSCOPE_API_KEY:}
+      enabled: ${AI_DASHSCOPE_ENABLED:true}
+      api-key: ${AI_DASHSCOPE_API_KEY:sk-ws-H.RXIEDIM.sbNt.MEQCIHM4Yd-RpzdTYCvoX7O6irqYhoVEA5Hd0_AV4SgbyrreAiBnf_aSJTfO5HmKfAe-L-ExdtHgAz_LFYamocyR1yTzJA}
       chat:
         options:
           model: ${AI_DASHSCOPE_CHAT_MODEL:qwen-plus}
@@ -29,7 +29,7 @@ tripstar:
   map:
     amap:
       enabled: ${AMAP_ENABLED:true}
-      key: ${AMAP_KEY:}
+      key: ${AMAP_KEY:61efbe8221fcd2ecea8e83963e463597}
       base-url: ${AMAP_BASE_URL:https://restapi.amap.com}
   content:
     xhs:

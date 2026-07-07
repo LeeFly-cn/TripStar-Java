@@ -1,8 +1,9 @@
 # TripStar Java 代码学习导读
 
-这份文档按“一个任务来了，代码怎么跑”的顺序讲 Java 版 TripStar。当前版本已经进入 Agent Tool 驱动阶段：
+这份文档按“一个任务来了，代码怎么跑”的顺序讲 Java 版 TripStar。当前版本已经进入分阶段 Agent Workflow 阶段：
 
-- 高德 POI、酒店、餐饮、天气由 `TravelResearchAgent` 调用 `AmapTravelTools` 获取。
+- Java 工作流控制阶段顺序，每个阶段由一个 ReactAgent 负责。
+- 高德 POI、酒店、餐饮、天气分别由不同 Agent 调用白名单 Tool 获取。
 - 小红书支持 `service` / `tool` / `both` 三种模式。
 - LLM JSON 输出主要使用 Spring AI `BeanOutputConverter` 结构化输出解析。
 - Prompt 统一放在 `modules/ai/src/main/resources/prompts/tripstar/`。
@@ -14,7 +15,7 @@ app
   Controller、WebSocket、启动配置、运行时设置接口
 
 modules/trip
-  旅行规划主流程、ResearchAgent 编排、PlannerAgent 编排、DTO、知识图谱转换
+  旅行规划主流程、Research Workflow 编排、PlannerAgent 编排、DTO、知识图谱转换
 
 modules/content
   小红书搜索、详情、签名、图片、小红书 Tool、游记内容提炼
@@ -46,9 +47,14 @@ modules/trip/src/main/java/com/zkry/trip/service/TripAiPlannerService.java
 modules/trip/src/main/java/com/zkry/trip/service/TripPlanResponseFactory.java
 
 modules/map/src/main/java/com/zkry/map/service/AmapTravelTools.java
+modules/map/src/main/java/com/zkry/map/service/AmapGeoPoiTools.java
+modules/map/src/main/java/com/zkry/map/service/AmapWeatherTools.java
+modules/map/src/main/java/com/zkry/map/service/AmapHotelTools.java
 modules/map/src/main/java/com/zkry/map/service/AmapMapContextService.java
 
 modules/content/src/main/java/com/zkry/content/service/XhsTravelTools.java
+modules/content/src/main/java/com/zkry/content/service/XhsSearchTools.java
+modules/content/src/main/java/com/zkry/content/service/XhsDetailTools.java
 modules/content/src/main/java/com/zkry/content/service/XhsContentService.java
 modules/content/src/main/java/com/zkry/content/service/XhsNativeClient.java
 modules/content/src/main/java/com/zkry/content/service/XhsSignService.java
@@ -115,8 +121,12 @@ TripTaskService.runPlanning()
 submitted
   -> initializing
   -> travel_research
+  -> xhs_search
+  -> xhs_detail
+  -> amap_poi_search
   -> weather_search
   -> hotel_search
+  -> research_merge
   -> planning
   -> graph_building
   -> completed / failed
@@ -129,8 +139,9 @@ TripTaskStatus
   -> PROCESSING / COMPLETED / FAILED
 
 TripTaskStage
-  -> SUBMITTED / INITIALIZING / TRAVEL_RESEARCH / WEATHER_SEARCH
-  -> HOTEL_SEARCH / PLANNING / GRAPH_BUILDING / COMPLETED / FAILED
+  -> SUBMITTED / INITIALIZING / TRAVEL_RESEARCH / XHS_SEARCH / XHS_DETAIL
+  -> AMAP_POI_SEARCH / WEATHER_SEARCH / HOTEL_SEARCH / RESEARCH_MERGE
+  -> PLANNING / GRAPH_BUILDING / COMPLETED / FAILED
 ```
 
 所以后端不要再裸写 `"travel_research"` 这类字符串；新增阶段时先加常量，再同步前端 `TripTaskStage` 类型。
@@ -139,8 +150,9 @@ TripTaskStage
 
 ```text
 TripTaskMessages
-  -> SUBMITTED / INITIALIZING / TRAVEL_RESEARCH / PLANNING
-  -> GRAPH_BUILDING / COMPLETED / FAILED
+  -> SUBMITTED / INITIALIZING / TRAVEL_RESEARCH / XHS_SEARCH / XHS_DETAIL
+  -> AMAP_POI_SEARCH / WEATHER_SEARCH / HOTEL_SEARCH / RESEARCH_MERGE
+  -> PLANNING / GRAPH_BUILDING / COMPLETED / FAILED
 ```
 
 这样 `TripTaskService` 只负责状态机推进，不再散落页面展示文案。
@@ -149,9 +161,14 @@ TripTaskMessages
 
 ```text
 runPlanning()
-  -> tripResearchService.research()
+  -> tripResearchService.research(..., progressReporter)
        -> 小红书 service/tool/both
-       -> TravelResearchAgent 调用高德/小红书工具
+       -> XhsSearchAgent 只拿 xhs_search_notes
+       -> XhsDetailAgent 只拿 xhs_note_detail
+       -> AmapPoiAgent 只拿 amap_geocode / amap_poi_search
+       -> AmapWeatherAgent 只拿 amap_weather
+       -> AmapHotelAgent 只拿 amap_hotel_search / amap_restaurant_search
+       -> Java 合并 MapPlanningContext + ContentPlanningContext
        -> 返回 MapPlanningContext + ContentPlanningContext
   -> tripAiPlannerService.plan()
        -> TripPlannerAgent 结构化输出 TripPlan
@@ -169,7 +186,7 @@ catch Exception
   -> WebSocket 推送错误给前端
 ```
 
-## 4. ResearchAgent 是什么
+## 4. 分阶段 Research Workflow 是什么
 
 研究阶段入口：
 
@@ -177,28 +194,38 @@ catch Exception
 TripResearchService.research(taskId, request)
 ```
 
-它负责把“查资料”从主流程里拆出来：
+它负责把“查资料”从主流程里拆出来，并保证阶段顺序：
 
 ```text
 TripResearchService
   -> 读取 xhs_mode
   -> 必要时先跑小红书 service
-  -> 调用 TravelResearchAgent
-  -> 给 Agent 挂载 AmapTravelTools / XhsTravelTools
-  -> 合并 service/tool 结果
+  -> XhsSearchAgent 搜索笔记
+  -> XhsDetailAgent 读取详情并提炼内容
+  -> AmapPoiAgent 查询经纬度和 POI
+  -> AmapWeatherAgent 查询天气
+  -> AmapHotelAgent 查询酒店和餐饮
+  -> 合并各阶段结果
 ```
 
 Prompt：
 
 ```text
-research-system.md
-research-user.md
+research-xhs-search-system.md / research-xhs-search-user.md
+research-xhs-detail-system.md / research-xhs-detail-user.md
+research-amap-poi-system.md / research-amap-poi-user.md
+research-amap-weather-system.md / research-amap-weather-user.md
+research-amap-hotel-system.md / research-amap-hotel-user.md
 ```
 
 Agent 常量：
 
 ```text
-TripstarAgent.TRAVEL_RESEARCH
+TripstarAgent.XHS_SEARCH
+TripstarAgent.XHS_DETAIL
+TripstarAgent.AMAP_POI_RESEARCH
+TripstarAgent.AMAP_WEATHER_RESEARCH
+TripstarAgent.AMAP_HOTEL_RESEARCH
 ```
 
 结构化返回：
@@ -215,12 +242,26 @@ TravelResearchResult
 
 这里的重点是：Agent 不是直接生成最终行程，而是先理解用户需求并调用工具收集真实上下文。
 
+为什么要分阶段？
+
+```text
+一个 Agent 拿全部工具
+  优点：看起来最自由
+  缺点：无法保证先搜小红书、再查 POI、再查天气和酒店，前端进度也不真实
+
+Java 工作流 + 分阶段 Agent
+  优点：阶段顺序确定，工具调用仍由 Agent 自主决定参数，前端进度对应真实执行
+```
+
 ## 5. 高德 Tool 怎么实现
 
 高德工具类：
 
 ```text
 AmapTravelTools
+AmapGeoPoiTools
+AmapWeatherTools
+AmapHotelTools
 ```
 
 暴露给 ReactAgent 的工具：
@@ -231,7 +272,6 @@ amap_poi_search
 amap_hotel_search
 amap_restaurant_search
 amap_weather
-amap_collect_city_context
 ```
 
 工具名统一放在：
@@ -247,7 +287,6 @@ AmapMapContextService
   -> geocode()
   -> searchPois()
   -> weatherForecasts()
-  -> collectCity()
 ```
 
 所以代码分工是：
@@ -257,7 +296,10 @@ AmapMapContextService
   负责真实高德 REST API 调用
 
 AmapTravelTools
-  负责把 Java 方法包装成 Spring AI Tool
+  负责统一调用高德 service，并返回 success/source/tool/data/error JSON
+
+AmapGeoPoiTools / AmapWeatherTools / AmapHotelTools
+  负责按阶段暴露 Spring AI Tool 白名单
 ```
 
 每个 Tool 返回给 LLM 的 JSON 字段固定为：
@@ -272,6 +314,16 @@ AmapTravelTools
 ```
 
 字段名集中在 `TravelToolResponseFields`，数据来源集中在 `TravelDataSource`。这样你看日志时能确认：Agent 调的是 `amap_hotel_search`，而不是混成普通 `amap_poi_search`。
+
+高德阶段现在是严格校验：
+
+```text
+高德 POI Agent 返回后 -> 必须有 map_context，且 realData=true
+高德天气 Agent 返回后 -> 必须有 map_context，且 realData=true
+高德酒店餐饮 Agent 返回后 -> 必须有 map_context，且 realData=true
+```
+
+如果 Agent 结构化输出缺少 `map_context`，或者工具返回失败后 Agent 没有拿到真实数据，`TripResearchService` 会在当前阶段直接抛错。这样不会出现“小红书或高德已经失败，但后面酒店、天气还在继续跑”的情况。
 
 为什么本期没有直接用高德 MCP？
 
@@ -295,15 +347,15 @@ tripstar:
 ```text
 service
   TripResearchService 先调用 XhsContentService.collect()
-  TravelResearchAgent 不挂小红书 Tool
+  小红书 Agent Tool 阶段不执行
 
 tool
-  TravelResearchAgent 挂 XhsTravelTools
-  Agent 自己调用 xhs_collect_city_context / xhs_search_notes / xhs_note_detail
+  XhsSearchAgent 先调用 xhs_search_notes
+  XhsDetailAgent 再调用 xhs_note_detail
 
 both
   先跑 XhsContentService.collect()
-  再让 TravelResearchAgent 调 XhsTravelTools
+  再跑 XhsSearchAgent + XhsDetailAgent
   最后合并两边 ContentPlanningContext
 ```
 
@@ -317,14 +369,22 @@ XhsContentService.collect()
   -> XhsExtractionAgent 提炼景点候选
 ```
 
+`noteDetail()` 只调用 `/api/sns/web/v1/feed`。如果接口返回“笔记不存在”、Cookie 失效、风控、登录异常或其它业务失败，错误会进入 `[XHS-API]` / `[XHS-Tool]` 日志，并由 `TripResearchService` 在小红书阶段直接终止任务；当前版本不再通过页面解析补数据。
+
 小红书 Tool 路径：
 
 ```text
-XhsTravelTools
-  -> xhs_collect_city_context()
+XhsSearchTools
   -> xhs_search_notes()
+
+XhsDetailTools
   -> xhs_note_detail()
+
+XhsTravelTools
+  -> 底层搜索/详情实现，供阶段白名单包装类复用
 ```
+
+小红书是必需数据源。工具单次失败会先以 `success=false` 返回给 Agent，让 Agent 有机会换笔记继续尝试；但 `TripResearchService` 会在 `xhs_search` 和 `xhs_detail` 阶段结束后做硬校验。如果当前启用的小红书路径没有拿到可读取笔记或真实游记正文，任务会立刻失败，不再继续调用高德 POI、天气和酒店。
 
 工具名统一放在：
 
@@ -378,25 +438,22 @@ ReactAgent.builder()
 工具挂载发生在：
 
 ```text
-TripResearchService.collectByAgent()
+TripResearchService.research()
 ```
 
-```java
-Object[] tools = mode.useTool()
-    ? new Object[] {amapTravelTools, xhsTravelTools}
-    : new Object[] {amapTravelTools};
-```
-
-这就是 ReactAgent 发挥作用的地方：它可以根据 prompt 自己决定调用哪些工具。
+这就是 ReactAgent 发挥作用的地方：每个阶段只拿自己的工具白名单，阶段内部由模型决定关键词和参数。
 
 当前工具策略：
 
 ```text
 xhs_mode=service
-  -> Agent 只挂 AmapTravelTools
+  -> 小红书走 XhsContentService
+  -> 高德分阶段挂 AmapGeoPoiTools / AmapWeatherTools / AmapHotelTools
 
 xhs_mode=tool/both
-  -> Agent 挂 AmapTravelTools + XhsTravelTools
+  -> XhsSearchAgent 挂 XhsSearchTools
+  -> XhsDetailAgent 挂 XhsDetailTools
+  -> 高德分阶段挂 AmapGeoPoiTools / AmapWeatherTools / AmapHotelTools
 ```
 
 所以你想观察 Agent 自主调用小红书，就把设置页的小红书模式切到 `tool` 或 `both`。
@@ -491,7 +548,7 @@ TripstarAgent.TRIP_REVIEW
 我带老人去昆明，不想太累，不想看滇池，住得方便一点
 ```
 
-现在 ResearchAgent prompt 明确要求：
+现在小红书详情 Agent 和高德 POI Agent 的 prompt 都明确要求：
 
 ```text
 当用户表达“不想去/不要/避开/不看”等否定偏好时，要记录到 excluded_places。
@@ -527,8 +584,8 @@ TripstarAgent.TRIP_REVIEW
 
 ```text
 开始旅行资料研究 taskId=... xhsMode=... useService=... useTool=...
-调用 TravelResearchAgent toolCount=... tools=[AmapTravelTools, XhsTravelTools]
-Agent 研究摘要 excludedPlaces=... constraints=... summary=...
+调用 XhsSearchAgent / XhsDetailAgent / AmapPoiAgent / AmapWeatherAgent / AmapHotelAgent
+合并研究摘要 excludedPlaces=... constraints=... summary=...
 ```
 
 ### Agent 调用日志
@@ -562,11 +619,11 @@ elapsedMs
 Tool 层看 Agent 调用过程：
 
 ```text
-[AMap-Tool] collectCityContext city=昆明 ...
-[AMap-Tool] collectCityContext 成功 city=昆明 attractions=... hotels=... restaurants=... weather=...
+[AMap-Tool] amap_poi_search city=昆明 keywords=昆明 老人 轻松 景点 limit=5
+[AMap-Tool] weather city=昆明
+[AMap-Tool] amap_hotel_search city=昆明 keywords=昆明 住得方便一点 limit=5
 ```
-
-如果 Agent 分别调用酒店/餐饮工具，日志和返回 JSON 会保留真实工具名：
+日志和返回 JSON 会保留真实工具名：
 
 ```text
 [AMap-Tool] amap_hotel_search city=昆明 keywords=昆明 住得方便一点 limit=5
@@ -593,8 +650,8 @@ REST 层看具体 API：
 Tool 层看 Agent 调用：
 
 ```text
-[XHS-Tool] collectCityContext city=昆明 ...
-[XHS-Tool] collectCityContext 成功 rawLength=... candidates=...
+[XHS-Tool] searchNotes keyword=昆明 老人 轻松 景点攻略 page=1 pageSize=5
+[XHS-Tool] noteDetail noteId=... xsecSource=pc_search
 ```
 
 API 和签名层看真实接口：
@@ -631,21 +688,38 @@ API 和签名层看真实接口：
 [TripTask] 创建旅行规划任务
 [TripTask] 进度更新 stage=travel_research
 
-[Research] 开始旅行资料研究 xhsMode=both useService=true useTool=true
+[Research] 开始分阶段旅行资料研究 xhsMode=both useService=true useTool=true
 [Research] 使用小红书 service 采集内容
 [XHS] 开始采集小红书游记
 [XHS-API] 准备搜索笔记
 [XHS-SIGN] 签名生成成功
 [XHS] LLM 提炼解析成功
 
-[Research] 调用 TravelResearchAgent tools=[AmapTravelTools, XhsTravelTools]
-[AI-AGENT] 开始调用 ReactAgent agent=travel-research-agent toolCount=2
-[AMap-Tool] collectCityContext city=昆明
-[AMap-Tool] collectCityContext 成功 attractions=... hotels=... restaurants=... weather=...
-[XHS-Tool] collectCityContext city=昆明
-[XHS-Tool] collectCityContext 成功 rawLength=... candidates=...
-[AI-STRUCTURED] 结构化输出解析成功 agent=travel-research-agent
-[Research] Agent 研究摘要 excludedPlaces=[滇池]
+[TripTask] 进度更新 stage=xhs_search
+[Research] 调用 XhsSearchAgent
+[XHS-Tool] searchNotes keyword=昆明 老人 轻松 景点攻略
+[AI-STRUCTURED] 结构化输出解析成功 agent=xhs-search-agent
+
+[TripTask] 进度更新 stage=xhs_detail
+[Research] 调用 XhsDetailAgent
+[XHS-Tool] noteDetail noteId=...
+[AI-STRUCTURED] 结构化输出解析成功 agent=xhs-detail-agent
+
+[TripTask] 进度更新 stage=amap_poi_search
+[Research] 调用地图阶段 Agent agent=amap-poi-research-agent
+[AMap-Tool] amap_poi_search city=昆明 keywords=昆明 老人 轻松 景点
+
+[TripTask] 进度更新 stage=weather_search
+[Research] 调用地图阶段 Agent agent=amap-weather-research-agent
+[AMap-Tool] weather city=昆明
+
+[TripTask] 进度更新 stage=hotel_search
+[Research] 调用地图阶段 Agent agent=amap-hotel-research-agent
+[AMap-Tool] amap_hotel_search city=昆明 keywords=昆明 住得方便一点
+[AMap-Tool] amap_restaurant_search city=昆明 keywords=昆明 特色美食
+
+[TripTask] 进度更新 stage=research_merge
+[Research] 合并研究摘要 excludedPlaces=[滇池]
 
 [AI-STRUCTURED] 开始结构化 Agent 调用 agent=trip-planner-agent
 [AI-STRUCTURED] 结构化输出解析成功 agent=trip-planner-agent
@@ -731,7 +805,7 @@ TripAiPlannerService.reviewPlan()
 做法：
 
 ```text
-ResearchAgent 提取 excluded_places
+研究阶段 Agent 提取 excluded_places
 Java 检查 TripPlan attractions/hotel/meals 是否包含 excluded_places
 命中则 Review 失败或触发重规划
 ```
@@ -769,17 +843,19 @@ updatedAt
 1. `TripController`
 2. `TripTaskService`
 3. `TripResearchService`
-4. `AmapTravelTools`
-5. `AmapMapContextService`
-6. `XhsTravelTools`
-7. `XhsContentService`
-8. `XhsNativeClient`
-9. `XhsSignService`
-10. `AiAgentService`
-11. `AiStructuredOutputService`
-12. `TripAiPlannerService`
-13. `TripPlanResponseFactory`
-14. `prompts/tripstar/*.md`
+4. `AmapGeoPoiTools` / `AmapWeatherTools` / `AmapHotelTools`
+5. `AmapTravelTools`
+6. `AmapMapContextService`
+7. `XhsSearchTools` / `XhsDetailTools`
+8. `XhsTravelTools`
+9. `XhsContentService`
+10. `XhsNativeClient`
+11. `XhsSignService`
+12. `AiAgentService`
+13. `AiStructuredOutputService`
+14. `TripAiPlannerService`
+15. `TripPlanResponseFactory`
+16. `prompts/tripstar/*.md`
 15. `frontend/src/components/NavBar.vue`
 16. `frontend/src/views/Result.vue`
 

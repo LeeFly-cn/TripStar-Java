@@ -28,7 +28,7 @@ public class PoiController {
         log.info("[POI] 收到景点图片请求 name={} city={} keyword={}", name, safe(city), keyword);
         String photoUrl = travelContentService.photo(keyword);
         String message = photoUrl.isBlank()
-            ? "未从小红书找到图片，前端会使用默认占位图。"
+            ? "未从小红书找到可用图片。"
             : "获取图片成功";
         log.info("[POI] 景点图片请求完成 name={} city={} found={} elapsedMs={}",
             name, safe(city), !photoUrl.isBlank(), System.currentTimeMillis() - startedAt);
