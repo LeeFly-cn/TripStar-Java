@@ -155,6 +155,22 @@ TripTaskMessages
   -> PLANNING / GRAPH_BUILDING / COMPLETED / FAILED
 ```
 
+进度百分比集中在：
+
+```text
+TripTaskProgress
+  -> 0~30：景点资料搜索，包括 xhs_search、xhs_detail、amap_poi_search
+  -> 31~50：weather_search
+  -> 51~70：hotel_search
+  -> 70 以后：research_merge、planning、graph_building、completed
+```
+
+注意：后端阶段可以很细，但前端 Landing 页的 stepper 是按进度百分比展示大阶段。
+为了适配原 Vue 项目，WebSocket 推给前端的景点资料阶段统一使用 `attraction_search`，
+小红书搜索、小红书详情、高德 POI 的区别只体现在 `message` 和后端日志里。
+所以小红书详情只应该改变文案，不应该把 stage 或进度推到天气区间。
+同理，研究结果合并阶段推给前端的 stage 使用 `planning`，避免原 Vue 项目不识别 `research_merge`。
+
 这样 `TripTaskService` 只负责状态机推进，不再散落页面展示文案。
 
 核心代码流：
@@ -385,6 +401,18 @@ XhsTravelTools
 ```
 
 小红书是必需数据源。工具单次失败会先以 `success=false` 返回给 Agent，让 Agent 有机会换笔记继续尝试；但 `TripResearchService` 会在 `xhs_search` 和 `xhs_detail` 阶段结束后做硬校验。如果当前启用的小红书路径没有拿到可读取笔记或真实游记正文，任务会立刻失败，不再继续调用高德 POI、天气和酒店。
+
+小红书景点坐标校准：
+
+```text
+XhsDetailAgent / XhsContentService
+  -> 提炼 ContentAttractionCandidate（景点名、理由、预约、避坑）
+  -> TripPlannerPrompts.xhsAttractionCandidatesBlock()
+  -> 作为 {{xhs_attractions}} 传给 AmapPoiAgent
+  -> AmapPoiAgent 调用 amap_geocode / amap_poi_search 校准高德真实 POI 和经纬度
+```
+
+这条链路对齐 Python 原项目的思路：小红书决定“哪些景点值得去”，高德负责“这些景点在哪”。区别是 Java 版把坐标校准交给 POI Agent，而不是让小红书详情 Agent 同时拿地图工具。
 
 工具名统一放在：
 
@@ -650,7 +678,7 @@ REST 层看具体 API：
 Tool 层看 Agent 调用：
 
 ```text
-[XHS-Tool] searchNotes keyword=昆明 老人 轻松 景点攻略 page=1 pageSize=5
+[XHS-Tool] searchNotes keyword=昆明旅游攻略 page=1 requestedPageSize=5 apiPageSize=20 returnLimit=5
 [XHS-Tool] noteDetail noteId=... xsecSource=pc_search
 ```
 
@@ -658,8 +686,14 @@ API 和签名层看真实接口：
 
 ```text
 [XHS-SIGN] 签名生成
-[XHS-API] 搜索笔记 / 获取详情
+[XHS-API] 准备搜索笔记 keyword=昆明旅游攻略 page=1 sortType=0 requestedPageSize=20 actualPageSize=20
+[XHS-API] 接口调用成功 api=/api/sns/web/v1/search/notes itemCount=... hasMore=...
 ```
+
+这里要注意：`xhs_search_notes` 里的 `pageSize` 只是兼容参数，不直接透传给小红书接口。
+小红书搜索接口当前按 `page_size=5/10` 可能返回 `success=true` 但没有 `items`，所以底层统一按 20 条请求，
+再由 Tool 层固定截取最多 5 条给 Agent。后面的 XhsSearchAgent 不再二次筛选这 5 条，
+XhsDetailAgent 会读取搜索结果里的全部笔记详情，并在 rawText 中保留“笔记1/笔记2”的边界。
 
 日志不会打印 Cookie、API Key、完整 prompt、完整工具返回体。
 
@@ -695,17 +729,17 @@ API 和签名层看真实接口：
 [XHS-SIGN] 签名生成成功
 [XHS] LLM 提炼解析成功
 
-[TripTask] 进度更新 stage=xhs_search
+[TripTask] 进度更新 stage=attraction_search message=正在调用小红书搜索智能体...
 [Research] 调用 XhsSearchAgent
 [XHS-Tool] searchNotes keyword=昆明 老人 轻松 景点攻略
 [AI-STRUCTURED] 结构化输出解析成功 agent=xhs-search-agent
 
-[TripTask] 进度更新 stage=xhs_detail
+[TripTask] 进度更新 stage=attraction_search message=正在调用小红书详情智能体...
 [Research] 调用 XhsDetailAgent
 [XHS-Tool] noteDetail noteId=...
 [AI-STRUCTURED] 结构化输出解析成功 agent=xhs-detail-agent
 
-[TripTask] 进度更新 stage=amap_poi_search
+[TripTask] 进度更新 stage=attraction_search message=正在调用高德 POI 智能体...
 [Research] 调用地图阶段 Agent agent=amap-poi-research-agent
 [AMap-Tool] amap_poi_search city=昆明 keywords=昆明 老人 轻松 景点
 
@@ -718,7 +752,7 @@ API 和签名层看真实接口：
 [AMap-Tool] amap_hotel_search city=昆明 keywords=昆明 住得方便一点
 [AMap-Tool] amap_restaurant_search city=昆明 keywords=昆明 特色美食
 
-[TripTask] 进度更新 stage=research_merge
+[TripTask] 进度更新 stage=planning message=正在合并小红书和高德上下文...
 [Research] 合并研究摘要 excludedPlaces=[滇池]
 
 [AI-STRUCTURED] 开始结构化 Agent 调用 agent=trip-planner-agent

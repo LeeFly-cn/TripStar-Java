@@ -23,7 +23,7 @@ public class XhsSearchTools {
     public String searchNotes(
         @ToolParam(description = "搜索关键词，例如：昆明 老人 轻松 景点攻略。", required = true) String keyword,
         @ToolParam(description = "页码，从 1 开始。", required = false) Integer page,
-        @ToolParam(description = "最多返回数量，建议 3 到 10。", required = false) Integer pageSize
+        @ToolParam(description = "兼容参数；Tool 固定最多返回 5 条笔记，底层小红书接口固定按 20 条请求。", required = false) Integer pageSize
     ) {
         return delegate.searchNotes(keyword, page, pageSize);
     }

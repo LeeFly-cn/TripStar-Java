@@ -130,7 +130,7 @@ public class TripResearchService {
         ContentPlanningContext toolContent = null;
 
         if (mode.useTool()) {
-            reporter.report(TripTaskStage.XHS_SEARCH, 22, TripTaskMessages.XHS_SEARCH);
+            reporter.report(TripTaskStage.ATTRACTION_SEARCH, TripTaskProgress.XHS_SEARCH, TripTaskMessages.XHS_SEARCH);
             xhsSearchResult = collectXhsSearchByAgent(taskId, request)
                 .orElseThrow(() -> new BizException("小红书搜索 Agent 未返回结构化结果，请检查工具调用日志和模型输出格式。"));
             log.info("[Research] 小红书搜索 Agent 完成 taskId={} cities={} searchNoteCount={} toolCalls={} summary={} cityDetails={}",
@@ -146,7 +146,7 @@ public class TripResearchService {
                 failXhsStage(taskId, TripTaskStage.XHS_SEARCH, reason);
             }
 
-            reporter.report(TripTaskStage.XHS_DETAIL, 32, TripTaskMessages.XHS_DETAIL);
+            reporter.report(TripTaskStage.ATTRACTION_SEARCH, TripTaskProgress.XHS_DETAIL, TripTaskMessages.XHS_DETAIL);
             xhsToolResult = collectXhsDetailsByAgent(taskId, request, xhsSearchResult)
                 .orElseThrow(() -> new BizException("小红书详情 Agent 未返回结构化结果，请检查 xhs_note_detail 工具日志和模型输出格式。"));
             toolContent = requireContentStage(taskId, TripTaskStage.XHS_DETAIL, "小红书详情", xhsToolResult);
@@ -162,8 +162,11 @@ public class TripResearchService {
             }
         }
         ensureXhsReadyBeforeMap(taskId, mode, serviceContent, toolContent);
+        ContentPlanningContext xhsContentForPoi = contentForPoi(mode, serviceContent, toolContent);
+        log.info("[Research] 准备让高德 POI Agent 校准小红书景点 taskId={} xhsCandidateCount={}",
+            taskId, xhsCandidateCount(xhsContentForPoi));
 
-        reporter.report(TripTaskStage.AMAP_POI_SEARCH, 44, TripTaskMessages.AMAP_POI_SEARCH);
+        reporter.report(TripTaskStage.ATTRACTION_SEARCH, TripTaskProgress.AMAP_POI_SEARCH, TripTaskMessages.AMAP_POI_SEARCH);
         TravelResearchResult poiResult = collectMapByAgent(
             taskId,
             request,
@@ -171,11 +174,12 @@ public class TripResearchService {
             TripstarPrompt.RESEARCH_AMAP_POI_SYSTEM,
             TripstarPrompt.RESEARCH_AMAP_POI_USER,
             "amap-poi",
+            Map.of(TripstarPromptVariable.XHS_ATTRACTIONS, TripPlannerPrompts.xhsAttractionCandidatesBlock(xhsContentForPoi)),
             amapGeoPoiTools
         ).orElseThrow(() -> new BizException("高德 POI Agent 未返回结构化结果，请检查 amap_poi_search 工具调用日志。"));
         MapPlanningContext poiContext = ensureMapStageData(taskId, TripTaskStage.AMAP_POI_SEARCH, "高德 POI", poiResult);
 
-        reporter.report(TripTaskStage.WEATHER_SEARCH, 58, TripTaskMessages.WEATHER_SEARCH);
+        reporter.report(TripTaskStage.WEATHER_SEARCH, TripTaskProgress.WEATHER_SEARCH, TripTaskMessages.WEATHER_SEARCH);
         TravelResearchResult weatherResult = collectMapByAgent(
             taskId,
             request,
@@ -187,7 +191,7 @@ public class TripResearchService {
         ).orElseThrow(() -> new BizException("高德天气 Agent 未返回结构化结果，请检查 amap_weather 工具调用日志。"));
         MapPlanningContext weatherContext = ensureMapStageData(taskId, TripTaskStage.WEATHER_SEARCH, "高德天气", weatherResult);
 
-        reporter.report(TripTaskStage.HOTEL_SEARCH, 70, TripTaskMessages.HOTEL_SEARCH);
+        reporter.report(TripTaskStage.HOTEL_SEARCH, TripTaskProgress.HOTEL_SEARCH, TripTaskMessages.HOTEL_SEARCH);
         TravelResearchResult hotelResult = collectMapByAgent(
             taskId,
             request,
@@ -199,7 +203,7 @@ public class TripResearchService {
         ).orElseThrow(() -> new BizException("高德酒店 Agent 未返回结构化结果，请检查 amap_hotel_search / amap_restaurant_search 工具调用日志。"));
         MapPlanningContext hotelContext = ensureMapStageData(taskId, TripTaskStage.HOTEL_SEARCH, "高德酒店餐饮", hotelResult);
 
-        reporter.report(TripTaskStage.RESEARCH_MERGE, 78, TripTaskMessages.RESEARCH_MERGE);
+        reporter.report(TripTaskStage.PLANNING, TripTaskProgress.RESEARCH_MERGE, TripTaskMessages.RESEARCH_MERGE);
         ContentPlanningContext mergedContent = mergeContent(
             serviceContent,
             toolContent,
@@ -246,7 +250,7 @@ public class TripResearchService {
             log.info("[Research] 小红书 service 模式未启用，跳过 service 采集");
             return null;
         }
-        reporter.report(TripTaskStage.XHS_SEARCH, 20, "正在通过小红书 service 搜索真实游记...");
+        reporter.report(TripTaskStage.ATTRACTION_SEARCH, TripTaskProgress.XHS_SERVICE_SEARCH, "正在通过小红书 service 搜索真实游记...");
         return collectContentByService(request);
     }
 
@@ -394,7 +398,32 @@ public class TripResearchService {
         String threadSuffix,
         Object tools
     ) {
+        return collectMapByAgent(
+            taskId,
+            request,
+            agent,
+            systemPromptPath,
+            userPromptPath,
+            threadSuffix,
+            Map.of(),
+            tools
+        );
+    }
+
+    private Optional<TravelResearchResult> collectMapByAgent(
+        String taskId,
+        TripRequest request,
+        TripstarAgent agent,
+        String systemPromptPath,
+        String userPromptPath,
+        String threadSuffix,
+        Map<String, String> extraVariables,
+        Object tools
+    ) {
         Map<String, String> variables = new LinkedHashMap<>(TripPlannerPrompts.requestVariables(request));
+        if (extraVariables != null && !extraVariables.isEmpty()) {
+            variables.putAll(extraVariables);
+        }
         variables.put(TripstarPromptVariable.FORMAT, structuredOutputService.format(TravelResearchResult.class));
         String userPrompt = promptResourceService.render(userPromptPath, variables);
         log.info("[Research] 调用地图阶段 Agent taskId={} agent={} tools={}",
@@ -415,6 +444,41 @@ public class TripResearchService {
             value.safeToolCalls(),
             value.safeSummary()));
         return result;
+    }
+
+    private ContentPlanningContext contentForPoi(
+        XhsMode mode,
+        ContentPlanningContext serviceContent,
+        ContentPlanningContext toolContent
+    ) {
+        if (mode == XhsMode.SERVICE) {
+            return serviceContent;
+        }
+        if (mode == XhsMode.TOOL) {
+            return toolContent;
+        }
+        List<ContentCityContext> cities = new ArrayList<>();
+        if (serviceContent != null) {
+            cities.addAll(serviceContent.safeCities());
+        }
+        if (toolContent != null) {
+            cities.addAll(toolContent.safeCities());
+        }
+        return new ContentPlanningContext(
+            cities,
+            serviceContent != null && serviceContent.realData() && toolContent != null && toolContent.realData(),
+            TravelDataSource.XHS_BOTH,
+            TravelResearchMessages.bothMessage(serviceContent, toolContent)
+        );
+    }
+
+    private int xhsCandidateCount(ContentPlanningContext context) {
+        if (context == null) {
+            return 0;
+        }
+        return context.safeCities().stream()
+            .mapToInt(city -> city.safeAttractions().size())
+            .sum();
     }
 
     private ContentPlanningContext requireContentStage(

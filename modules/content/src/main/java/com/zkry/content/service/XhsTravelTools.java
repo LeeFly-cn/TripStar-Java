@@ -35,11 +35,12 @@ public class XhsTravelTools {
     public String searchNotes(String keyword, Integer page, Integer pageSize) {
         long startedAt = System.currentTimeMillis();
         int safePage = page == null || page <= 0 ? 1 : page;
-        int safePageSize = pageSize == null || pageSize <= 0 ? 5 : Math.min(pageSize, 10);
-        log.info("[XHS-Tool] searchNotes keyword={} page={} pageSize={}", keyword, safePage, safePageSize);
+        int returnLimit = XhsApiDefaults.TOOL_RETURN_LIMIT;
+        log.info("[XHS-Tool] searchNotes keyword={} page={} requestedPageSize={} apiPageSize={} returnLimit={}",
+            keyword, safePage, pageSize, XhsApiDefaults.SEARCH_PAGE_SIZE, returnLimit);
         try {
-            JsonNode root = xhsNativeClient.searchNotes(cookie(), keyword, safePage, 0, safePageSize);
-            List<Map<String, Object>> notes = simplifySearch(root, safePageSize);
+            JsonNode root = xhsNativeClient.searchNotes(cookie(), keyword, safePage, 0, XhsApiDefaults.SEARCH_PAGE_SIZE);
+            List<Map<String, Object>> notes = simplifySearch(root, keyword, returnLimit);
             log.info("[XHS-Tool] searchNotes 成功 keyword={} noteCount={} elapsedMs={}",
                 keyword, notes.size(), elapsed(startedAt));
             return success(XhsToolNames.SEARCH_NOTES, notes);
@@ -71,12 +72,16 @@ public class XhsTravelTools {
             .orElseThrow(() -> new BizException("小红书 Cookie 未配置，请先在设置页填写“小红书 Cookie”。"));
     }
 
-    private List<Map<String, Object>> simplifySearch(JsonNode root, int limit) {
+    private List<Map<String, Object>> simplifySearch(JsonNode root, String keyword, int limit) {
         JsonNode items = root.path("data").path("items");
         if (!items.isArray()) {
+            log.info("[XHS-Tool] searchNotes 原始结果不是数组 keyword={} dataKeys={}",
+                keyword, root.path("data").properties().stream().map(Map.Entry::getKey).toList());
             return List.of();
         }
         java.util.ArrayList<Map<String, Object>> notes = new java.util.ArrayList<>();
+        int noteItems = 0;
+        int missingId = 0;
         for (JsonNode item : items) {
             if (notes.size() >= limit) {
                 break;
@@ -84,9 +89,11 @@ public class XhsTravelTools {
             if (!"note".equals(item.path("model_type").asText(""))) {
                 continue;
             }
+            noteItems++;
             JsonNode noteCard = item.path("note_card");
             String noteId = XhsNoteJsons.noteId(item);
             if (noteId.isBlank()) {
+                missingId++;
                 log.debug("[XHS-Tool] 跳过无 noteId 的搜索结果 rawId={} title={}",
                     item.path("id").asText(""), XhsNoteJsons.title(noteCard));
                 continue;
@@ -99,6 +106,8 @@ public class XhsTravelTools {
             note.put("liked_count", noteCard.path("interact_info").path("liked_count").asText(""));
             notes.add(note);
         }
+        log.info("[XHS-Tool] searchNotes 原始结果统计 keyword={} rawItems={} noteItems={} missingId={} selected={}",
+            keyword, items.size(), noteItems, missingId, notes.size());
         return notes;
     }
 

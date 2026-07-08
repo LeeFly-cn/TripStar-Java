@@ -120,7 +120,7 @@ public class XhsContentService implements TravelContentService {
         }
         long startedAt = System.currentTimeMillis();
         log.info("[XHS] 开始搜索景点图片 keyword={}", keyword);
-        JsonNode search = xhsNativeClient.searchNotes(cookie.get(), keyword, 1, 0, 20);
+        JsonNode search = xhsNativeClient.searchNotes(cookie.get(), keyword, 1, 0, XhsApiDefaults.SEARCH_PAGE_SIZE);
         JsonNode items = search.path("data").path("items");
         if (!items.isArray()) {
             log.info("[XHS] 图片搜索结果不是数组 keyword={} elapsedMs={}", keyword, System.currentTimeMillis() - startedAt);
@@ -164,7 +164,7 @@ public class XhsContentService implements TravelContentService {
         String query = request.city() + " " + request.keyword() + " 旅游 景点攻略";
         long startedAt = System.currentTimeMillis();
         log.info("[XHS] 开始搜索城市游记 city={} keyword={} query={}", request.city(), request.keyword(), query);
-        JsonNode search = xhsNativeClient.searchNotes(cookie, query, 1, 0, 20);
+        JsonNode search = xhsNativeClient.searchNotes(cookie, query, 1, 0, XhsApiDefaults.SEARCH_PAGE_SIZE);
         JsonNode items = search.path("data").path("items");
         StringBuilder combined = new StringBuilder();
         int count = 0;

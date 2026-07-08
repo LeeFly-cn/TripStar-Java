@@ -321,6 +321,31 @@ AttractionExtractionService
 ]
 ```
 
+当前坐标补全不放在小红书详情 Agent 里，而是交给高德 POI Agent：
+
+```text
+小红书搜索阶段
+  -> 底层接口固定按 20 条请求，避免小 page_size 返回空 items
+  -> xhs_search_notes Tool 固定最多返回 5 条笔记
+  -> XhsSearchAgent 原样复制 Tool 返回的 note_id/title/xsec_token
+
+小红书详情阶段
+  -> XhsDetailAgent 读取搜索结果里的全部笔记详情
+  -> rawText 保留“笔记1/笔记2”边界
+  -> 提炼景点候选、推荐理由、预约提示、避坑建议
+
+高德 POI 阶段
+  -> 接收 {{xhs_attractions}}
+  -> 优先为小红书候选调用 amap_poi_search / amap_geocode
+  -> 输出带高德地址和经纬度的 map_context.cities[].attractions
+
+最终 Planner
+  -> 坐标以 map_context 为准
+  -> 推荐理由和预约信息以 content_context 为准
+```
+
+这样职责更清楚：小红书 Agent 负责理解游记内容，高德 Agent 负责地图事实校准。相比 Python 版 service 循环 geocode，Java 版保留了 Agent 自主判断关键词、匹配 POI 和排除用户不想去地点的学习价值。
+
 小红书为什么当前不降级：
 
 - 你当前学习目标是复刻 Python 项目的真实内容链路，所以缺 Cookie 时必须暴露问题。

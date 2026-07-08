@@ -20,6 +20,7 @@ public final class TripstarPromptVariable {
     public static final String MESSAGE = "message";
     public static final String TRIP_PLAN = "trip_plan";
     public static final String XHS_SEARCH_RESULTS = "xhs_search_results";
+    public static final String XHS_ATTRACTIONS = "xhs_attractions";
 
     private TripstarPromptVariable() {
     }

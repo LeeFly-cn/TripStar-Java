@@ -37,12 +37,15 @@ import tools.jackson.databind.JsonNode;
 public class AmapMapContextService {
 
     private static final Logger log = LoggerFactory.getLogger(AmapMapContextService.class);
+    private static final String AMAP_RATE_LIMIT_INFOCODE = "10021";
 
     private final HttpClient httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(4))
         .build();
+    private final Object rateLimitMonitor = new Object();
 
     private final TripstarRuntimeSettingsService runtimeSettingsService;
+    private long lastRequestAt;
 
     public AmapMapContextService(TripstarRuntimeSettingsService runtimeSettingsService) {
         this.runtimeSettingsService = runtimeSettingsService;
@@ -53,6 +56,15 @@ public class AmapMapContextService {
 
     @Value("${tripstar.map.amap.base-url:https://restapi.amap.com}")
     private String baseUrl;
+
+    @Value("${tripstar.map.amap.min-interval-ms:350}")
+    private long minIntervalMs;
+
+    @Value("${tripstar.map.amap.rate-limit-retries:2}")
+    private int rateLimitRetries;
+
+    @Value("${tripstar.map.amap.rate-limit-retry-delay-ms:1000}")
+    private long rateLimitRetryDelayMs;
 
     public GeocodeResult geocode(String city) throws IOException, InterruptedException {
         validateReady();
@@ -159,30 +171,72 @@ public class AmapMapContextService {
         Map<String, String> finalParams = new LinkedHashMap<>();
         finalParams.put("key", apiKey());
         finalParams.putAll(params);
-        HttpRequest request = HttpRequest.newBuilder(uri(path, finalParams))
-            .timeout(Duration.ofSeconds(8))
-            .GET()
-            .build();
-        long startedAt = System.currentTimeMillis();
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        log.debug("[AMap] HTTP GET path={} status={} elapsedMs={} bodyLength={}",
-            path,
-            response.statusCode(),
-            System.currentTimeMillis() - startedAt,
-            response.body() == null ? 0 : response.body().length());
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            log.warn("[AMap] HTTP 状态异常 path={} status={}", path, response.statusCode());
-            throw new BizException("高德 HTTP 状态异常 path=" + path + " status=" + response.statusCode());
-        }
-        JsonNode root = JsonUtils.getObjectMapper().readTree(response.body());
-        if ("0".equals(root.path("status").asText(""))) {
-            log.warn("[AMap] 业务状态失败 path={} infocode={} info={}",
-                path, text(root.path("infocode")), text(root.path("info")));
+        URI requestUri = uri(path, finalParams);
+        int maxAttempts = Math.max(1, rateLimitRetries + 1);
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            waitForAmapSlot(path, attempt);
+            HttpRequest request = HttpRequest.newBuilder(requestUri)
+                .timeout(Duration.ofSeconds(8))
+                .GET()
+                .build();
+            long startedAt = System.currentTimeMillis();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            log.debug("[AMap] HTTP GET path={} status={} attempt={}/{} elapsedMs={} bodyLength={}",
+                path,
+                response.statusCode(),
+                attempt,
+                maxAttempts,
+                System.currentTimeMillis() - startedAt,
+                response.body() == null ? 0 : response.body().length());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                log.warn("[AMap] HTTP 状态异常 path={} status={} attempt={}/{}",
+                    path, response.statusCode(), attempt, maxAttempts);
+                throw new BizException("高德 HTTP 状态异常 path=" + path + " status=" + response.statusCode());
+            }
+            JsonNode root = JsonUtils.getObjectMapper().readTree(response.body());
+            if (!"0".equals(root.path("status").asText(""))) {
+                return root;
+            }
+            String infocode = text(root.path("infocode"));
+            String info = text(root.path("info"));
+            if (isRateLimited(infocode) && attempt < maxAttempts) {
+                log.warn("[AMap] 触发高德 QPS 限流，等待后重试 path={} infocode={} info={} attempt={}/{} retryDelayMs={}",
+                    path, infocode, info, attempt, maxAttempts, safeRetryDelayMs());
+                Thread.sleep(safeRetryDelayMs());
+                continue;
+            }
+            log.warn("[AMap] 业务状态失败 path={} infocode={} info={} attempt={}/{}",
+                path, infocode, info, attempt, maxAttempts);
             throw new BizException("高德接口返回失败 path=" + path
-                + " infocode=" + text(root.path("infocode"))
-                + " info=" + text(root.path("info")));
+                + " infocode=" + infocode
+                + " info=" + info);
         }
-        return root;
+        throw new BizException("高德接口调用失败 path=" + path);
+    }
+
+    private void waitForAmapSlot(String path, int attempt) throws InterruptedException {
+        long interval = Math.max(0, minIntervalMs);
+        if (interval <= 0) {
+            return;
+        }
+        synchronized (rateLimitMonitor) {
+            long now = System.currentTimeMillis();
+            long waitMs = lastRequestAt + interval - now;
+            if (waitMs > 0) {
+                log.debug("[AMap] 请求节流等待 path={} attempt={} waitMs={}", path, attempt, waitMs);
+                Thread.sleep(waitMs);
+                now = System.currentTimeMillis();
+            }
+            lastRequestAt = now;
+        }
+    }
+
+    private boolean isRateLimited(String infocode) {
+        return AMAP_RATE_LIMIT_INFOCODE.equals(infocode);
+    }
+
+    private long safeRetryDelayMs() {
+        return Math.max(0, rateLimitRetryDelayMs);
     }
 
     private URI uri(String path, Map<String, String> params) {
