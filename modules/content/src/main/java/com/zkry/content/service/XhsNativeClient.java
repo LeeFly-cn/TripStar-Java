@@ -45,13 +45,14 @@ public class XhsNativeClient {
      * 返回的原始 JSON 交给 {@link XhsContentService} 做笔记过滤和 LLM 提炼。
      */
     public JsonNode searchNotes(String cookie, String keyword, int page, int sortType, int pageSize) {
-        log.info("[XHS-API] 准备搜索笔记 keyword={} page={} sortType={} pageSize={}",
-            keyword, page, sortType, pageSize);
+        int safePageSize = normalizeSearchPageSize(pageSize);
+        log.info("[XHS-API] 准备搜索笔记 keyword={} page={} sortType={} requestedPageSize={} actualPageSize={}",
+            keyword, page, sortType, pageSize, safePageSize);
         String api = "/api/sns/web/v1/search/notes";
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("keyword", keyword);
         data.put("page", page);
-        data.put("page_size", pageSize);
+        data.put("page_size", safePageSize);
         data.put("search_id", traceId(21));
         data.put("sort", sort(sortType));
         data.put("note_type", 0);
@@ -117,9 +118,9 @@ public class XhsNativeClient {
                 if ("300011".equals(code) || msg.contains("异常") || msg.contains("登录")) {
                     throw new XhsCookieExpiredException("小红书 Cookie 已失效或被风控拦截 (code=" + code + "): " + msg);
                 }
-                throw new XhsCookieExpiredException("小红书接口返回失败 (code=" + code + "): " + msg);
+                throw new XhsApiException(code, msg);
             }
-            log.debug("[XHS-API] 接口调用成功 api={} hasData={}", api, !root.path("data").isMissingNode());
+            logSuccessPayload(api, root, response.body());
             return root;
         } catch (IOException ex) {
             log.warn("[XHS-API] 请求 IO 失败 api={} elapsedMs={} reason={}", api, System.currentTimeMillis() - startedAt, ex.getMessage());
@@ -146,6 +147,14 @@ public class XhsNativeClient {
         };
     }
 
+    private int normalizeSearchPageSize(int pageSize) {
+        if (pageSize != XhsApiDefaults.SEARCH_PAGE_SIZE) {
+            log.debug("[XHS-API] 小红书搜索 page_size 已规范化 requested={} actual={}",
+                pageSize, XhsApiDefaults.SEARCH_PAGE_SIZE);
+        }
+        return XhsApiDefaults.SEARCH_PAGE_SIZE;
+    }
+
     private String traceId(int length) {
         String chars = "abcdef0123456789";
         StringBuilder value = new StringBuilder(length);
@@ -163,5 +172,18 @@ public class XhsNativeClient {
             || "content-length".equals(lowerName)
             || "expect".equals(lowerName)
             || "upgrade".equals(lowerName);
+    }
+
+    private void logSuccessPayload(String api, JsonNode root, String body) {
+        JsonNode items = root.path("data").path("items");
+        if (items.isArray()) {
+            log.info("[XHS-API] 接口调用成功 api={} itemCount={} hasMore={}",
+                api, items.size(), root.path("data").path("has_more").asText(""));
+        } else {
+            log.debug("[XHS-API] 接口调用成功 api={} hasData={}", api, !root.path("data").isMissingNode());
+        }
+        if (body != null && body.length() <= 512) {
+            log.debug("[XHS-API] 小响应体 api={} body={}", api, body);
+        }
     }
 }

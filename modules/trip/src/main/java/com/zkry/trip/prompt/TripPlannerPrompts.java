@@ -140,6 +140,33 @@ public final class TripPlannerPrompts {
             .collect(Collectors.joining("\n\n"));
     }
 
+    /**
+     * AmapPoiAgent 使用的小红书景点候选清单。
+     *
+     * <p>这里故意不包含大段游记原文，只给 POI Agent 景点名、预约和推荐理由。
+     * 它的职责是用高德工具校准这些候选的官方 POI 与经纬度。
+     */
+    public static String xhsAttractionCandidatesBlock(ContentPlanningContext context) {
+        if (context == null || !context.realData() || context.safeCities().isEmpty()) {
+            return "无小红书景点候选。";
+        }
+        String text = context.safeCities().stream()
+            .map(TripPlannerPrompts::xhsAttractionCityBlock)
+            .collect(Collectors.joining("\n\n"));
+        return text.isBlank() ? "无小红书景点候选。" : text;
+    }
+
+    private static String xhsAttractionCityBlock(ContentCityContext context) {
+        String candidates = contentCandidateLines(context.safeAttractions());
+        return """
+            城市：%s
+            小红书候选景点：%s
+            """.formatted(
+            context.city(),
+            candidates
+        );
+    }
+
     private static String contentCityBlock(ContentCityContext context) {
         String candidates = contentCandidateLines(context.safeAttractions());
         String raw = context.rawText() == null || context.rawText().isBlank()

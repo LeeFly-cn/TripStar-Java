@@ -11,7 +11,7 @@ spring:
     active: dev
   ai:
     dashscope:
-      enabled: ${AI_DASHSCOPE_ENABLED:false}
+      enabled: ${AI_DASHSCOPE_ENABLED:true}
       api-key: ${AI_DASHSCOPE_API_KEY:}
       chat:
         options:

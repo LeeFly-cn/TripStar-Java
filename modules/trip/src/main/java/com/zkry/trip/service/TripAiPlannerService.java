@@ -6,7 +6,6 @@ import com.zkry.ai.prompt.TripstarPromptVariable;
 import com.zkry.ai.service.AiAgentService;
 import com.zkry.ai.service.AiStructuredOutputService;
 import com.zkry.ai.service.PromptResourceService;
-import com.zkry.common.core.constant.TravelDataSource;
 import com.zkry.common.json.utils.JsonUtils;
 import com.zkry.content.dto.ContentPlanningContext;
 import com.zkry.map.dto.MapPlanningContext;
@@ -52,14 +51,6 @@ public class TripAiPlannerService {
 
     public boolean isAvailable() {
         return aiAgentService.isAvailable();
-    }
-
-    public Optional<TripPlanResponse> plan(String planId, TripRequest request) {
-        return plan(planId, request, MapPlanningContext.empty(TravelDataSource.NONE, "未采集地图上下文。"));
-    }
-
-    public Optional<TripPlanResponse> plan(String planId, TripRequest request, MapPlanningContext mapContext) {
-        return plan(planId, request, mapContext, ContentPlanningContext.empty(TravelDataSource.NONE, "未采集游记内容上下文。"));
     }
 
     public Optional<TripPlanResponse> plan(

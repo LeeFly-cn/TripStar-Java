@@ -2,12 +2,8 @@ package com.zkry.map.service;
 
 import com.zkry.common.core.config.TripstarRuntimeSettingsService;
 import com.zkry.common.core.config.TripstarSettingKeys;
-import com.zkry.common.core.constant.TravelDataSource;
 import com.zkry.common.core.exception.BizException;
 import com.zkry.common.json.utils.JsonUtils;
-import com.zkry.map.dto.MapCityContext;
-import com.zkry.map.dto.MapCityRequest;
-import com.zkry.map.dto.MapPlanningContext;
 import com.zkry.map.dto.MapPoi;
 import com.zkry.map.dto.MapPoint;
 import com.zkry.map.dto.MapWeatherForecast;
@@ -33,21 +29,23 @@ import tools.jackson.databind.JsonNode;
 /**
  * 高德 REST API 访问层。
  *
- * <p>这里放确定性、可测试的 HTTP 能力：地理编码、POI、天气。上层既可以通过
- * {@link MapContextService#collect(List)} 直接采集，也可以通过 {@link AmapTravelTools}
+ * <p>这里放确定性、可测试的 HTTP 能力：地理编码、POI、天气。上层通过
+ * {@link AmapGeoPoiTools}、{@link AmapWeatherTools} 和 {@link AmapHotelTools}
  * 暴露给 ReactAgent 调用。这样 Tool 只是“外壳”，不会复制一套高德请求逻辑。
  */
 @Service
-public class AmapMapContextService implements MapContextService {
+public class AmapMapContextService {
 
     private static final Logger log = LoggerFactory.getLogger(AmapMapContextService.class);
-    private static final int DEFAULT_LIMIT = 5;
+    private static final String AMAP_RATE_LIMIT_INFOCODE = "10021";
 
     private final HttpClient httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(4))
         .build();
+    private final Object rateLimitMonitor = new Object();
 
     private final TripstarRuntimeSettingsService runtimeSettingsService;
+    private long lastRequestAt;
 
     public AmapMapContextService(TripstarRuntimeSettingsService runtimeSettingsService) {
         this.runtimeSettingsService = runtimeSettingsService;
@@ -59,64 +57,14 @@ public class AmapMapContextService implements MapContextService {
     @Value("${tripstar.map.amap.base-url:https://restapi.amap.com}")
     private String baseUrl;
 
-    @Override
-    public MapPlanningContext collect(List<MapCityRequest> cityRequests) {
-        validateReady();
-        if (cityRequests == null || cityRequests.isEmpty()) {
-            log.info("[AMap] 城市请求为空，跳过地图上下文采集");
-            return MapPlanningContext.empty(TravelDataSource.AMAP, "没有城市信息，地图上下文跳过。");
-        }
+    @Value("${tripstar.map.amap.min-interval-ms:350}")
+    private long minIntervalMs;
 
-        long startedAt = System.currentTimeMillis();
-        log.info("[AMap] 开始采集地图上下文 cityCount={}", cityRequests.size());
-        List<MapCityContext> contexts = new ArrayList<>();
-        for (MapCityRequest cityRequest : cityRequests) {
-            try {
-                contexts.add(collectCity(cityRequest));
-            } catch (Exception ex) {
-                log.warn("高德地图上下文采集失败 city={}, reason={}", cityRequest.city(), ex.getMessage());
-            }
-        }
+    @Value("${tripstar.map.amap.rate-limit-retries:2}")
+    private int rateLimitRetries;
 
-        boolean hasData = contexts.stream().anyMatch(MapCityContext::hasAnyData);
-        String message = hasData ? "已采集高德地图 POI、酒店、餐饮和天气上下文。" : "高德地图未返回有效上下文，请检查 Key 权限、城市名或接口配额。";
-        log.info("[AMap] 地图上下文采集结束 realData={} cityContexts={} elapsedMs={}",
-            hasData, contexts.size(), System.currentTimeMillis() - startedAt);
-        return new MapPlanningContext(contexts, hasData, TravelDataSource.AMAP, message);
-    }
-
-    /**
-     * 单城市地图上下文采集：地理编码 -> 景点 POI -> 酒店 POI -> 餐饮 POI -> 天气。
-     *
-     * <p>这些数据会被写进规划 prompt，帮助 LLM 生成更像真实旅行助手的路线和提醒。
-     */
-    public MapCityContext collectCity(MapCityRequest request) throws IOException, InterruptedException {
-        validateReady();
-        long startedAt = System.currentTimeMillis();
-        log.info("[AMap] 开始采集城市地图上下文 city={} days={} preferences={} accommodation={}",
-            request.city(), request.days(), request.safePreferences(), request.accommodation());
-        GeocodeResult geocode = geocode(request.city());
-        List<MapPoi> attractions = searchPois(request.city(), attractionKeywords(request), DEFAULT_LIMIT);
-        List<MapPoi> hotels = searchPois(request.city(), hotelKeywords(request), DEFAULT_LIMIT);
-        List<MapPoi> restaurants = searchPois(request.city(), request.city() + " 特色美食", DEFAULT_LIMIT);
-        List<MapWeatherForecast> weatherForecasts = weatherForecasts(request.city(), geocode.adcode());
-        log.info("[AMap] 城市地图上下文完成 city={} center={} attractions={} hotels={} restaurants={} weather={} elapsedMs={}",
-            request.city(),
-            geocode.point() == null ? "-" : geocode.point().longitude() + "," + geocode.point().latitude(),
-            attractions.size(),
-            hotels.size(),
-            restaurants.size(),
-            weatherForecasts.size(),
-            System.currentTimeMillis() - startedAt);
-        return new MapCityContext(
-            request.city(),
-            geocode.point(),
-            attractions,
-            hotels,
-            restaurants,
-            weatherForecasts
-        );
-    }
+    @Value("${tripstar.map.amap.rate-limit-retry-delay-ms:1000}")
+    private long rateLimitRetryDelayMs;
 
     public GeocodeResult geocode(String city) throws IOException, InterruptedException {
         validateReady();
@@ -223,27 +171,72 @@ public class AmapMapContextService implements MapContextService {
         Map<String, String> finalParams = new LinkedHashMap<>();
         finalParams.put("key", apiKey());
         finalParams.putAll(params);
-        HttpRequest request = HttpRequest.newBuilder(uri(path, finalParams))
-            .timeout(Duration.ofSeconds(8))
-            .GET()
-            .build();
-        long startedAt = System.currentTimeMillis();
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        log.debug("[AMap] HTTP GET path={} status={} elapsedMs={} bodyLength={}",
-            path,
-            response.statusCode(),
-            System.currentTimeMillis() - startedAt,
-            response.body() == null ? 0 : response.body().length());
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            log.warn("[AMap] HTTP 状态异常 path={} status={}", path, response.statusCode());
-            return JsonUtils.getObjectMapper().createObjectNode();
+        URI requestUri = uri(path, finalParams);
+        int maxAttempts = Math.max(1, rateLimitRetries + 1);
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            waitForAmapSlot(path, attempt);
+            HttpRequest request = HttpRequest.newBuilder(requestUri)
+                .timeout(Duration.ofSeconds(8))
+                .GET()
+                .build();
+            long startedAt = System.currentTimeMillis();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            log.debug("[AMap] HTTP GET path={} status={} attempt={}/{} elapsedMs={} bodyLength={}",
+                path,
+                response.statusCode(),
+                attempt,
+                maxAttempts,
+                System.currentTimeMillis() - startedAt,
+                response.body() == null ? 0 : response.body().length());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                log.warn("[AMap] HTTP 状态异常 path={} status={} attempt={}/{}",
+                    path, response.statusCode(), attempt, maxAttempts);
+                throw new BizException("高德 HTTP 状态异常 path=" + path + " status=" + response.statusCode());
+            }
+            JsonNode root = JsonUtils.getObjectMapper().readTree(response.body());
+            if (!"0".equals(root.path("status").asText(""))) {
+                return root;
+            }
+            String infocode = text(root.path("infocode"));
+            String info = text(root.path("info"));
+            if (isRateLimited(infocode) && attempt < maxAttempts) {
+                log.warn("[AMap] 触发高德 QPS 限流，等待后重试 path={} infocode={} info={} attempt={}/{} retryDelayMs={}",
+                    path, infocode, info, attempt, maxAttempts, safeRetryDelayMs());
+                Thread.sleep(safeRetryDelayMs());
+                continue;
+            }
+            log.warn("[AMap] 业务状态失败 path={} infocode={} info={} attempt={}/{}",
+                path, infocode, info, attempt, maxAttempts);
+            throw new BizException("高德接口返回失败 path=" + path
+                + " infocode=" + infocode
+                + " info=" + info);
         }
-        JsonNode root = JsonUtils.getObjectMapper().readTree(response.body());
-        if ("0".equals(root.path("status").asText(""))) {
-            log.warn("[AMap] 业务状态失败 path={} infocode={} info={}",
-                path, text(root.path("infocode")), text(root.path("info")));
+        throw new BizException("高德接口调用失败 path=" + path);
+    }
+
+    private void waitForAmapSlot(String path, int attempt) throws InterruptedException {
+        long interval = Math.max(0, minIntervalMs);
+        if (interval <= 0) {
+            return;
         }
-        return root;
+        synchronized (rateLimitMonitor) {
+            long now = System.currentTimeMillis();
+            long waitMs = lastRequestAt + interval - now;
+            if (waitMs > 0) {
+                log.debug("[AMap] 请求节流等待 path={} attempt={} waitMs={}", path, attempt, waitMs);
+                Thread.sleep(waitMs);
+                now = System.currentTimeMillis();
+            }
+            lastRequestAt = now;
+        }
+    }
+
+    private boolean isRateLimited(String infocode) {
+        return AMAP_RATE_LIMIT_INFOCODE.equals(infocode);
+    }
+
+    private long safeRetryDelayMs() {
+        return Math.max(0, rateLimitRetryDelayMs);
     }
 
     private URI uri(String path, Map<String, String> params) {
@@ -269,21 +262,6 @@ public class AmapMapContextService implements MapContextService {
             log.warn("[AMap] 高德地图 Web Service Key 未配置");
             throw new BizException("高德地图 Web Service Key 未配置，请先在设置页填写“高德地图 Web Service Key”。");
         }
-    }
-
-    private String attractionKeywords(MapCityRequest request) {
-        String preferenceKeyword = request.safePreferences().stream()
-            .filter(preference -> preference != null && !preference.isBlank())
-            .findFirst()
-            .orElse("景点");
-        return request.city() + " " + preferenceKeyword;
-    }
-
-    private String hotelKeywords(MapCityRequest request) {
-        String accommodation = request.accommodation() == null || request.accommodation().isBlank()
-            ? "酒店"
-            : request.accommodation();
-        return request.city() + " " + accommodation;
     }
 
     private MapPoint parsePoint(String location) {

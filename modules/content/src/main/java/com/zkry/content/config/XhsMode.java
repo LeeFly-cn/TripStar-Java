@@ -6,7 +6,7 @@ import java.util.Locale;
  * 小红书资料获取模式。
  *
  * <p>{@link #SERVICE} 是 Java service 直接采集；{@link #TOOL} 是让
- * TravelResearchAgent 调用小红书工具；{@link #BOTH} 会两条链路都跑，适合你
+ * 小红书阶段 Agent 调用工具；{@link #BOTH} 会两条链路都跑，适合你
  * 对比“确定性服务编排”和“Agent 自主调工具”的效果差异。
  */
 public enum XhsMode {

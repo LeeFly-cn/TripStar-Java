@@ -4,25 +4,20 @@ import com.zkry.common.core.constant.TravelDataSource;
 import com.zkry.common.core.constant.TravelToolResponseFields;
 import com.zkry.common.core.exception.BizException;
 import com.zkry.common.json.utils.JsonUtils;
-import com.zkry.content.dto.ContentCityContext;
-import com.zkry.content.dto.ContentCityRequest;
-import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.tool.annotation.Tool;
-import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 
 /**
- * 小红书工具集合，供 TravelResearchAgent 主动调用。
+ * 小红书底层工具集合。
  *
  * <p>它复用 {@link XhsContentService} 和 {@link XhsNativeClient} 的真实采集能力，
- * 让 Agent 可以选择“一次性采集城市上下文”或“先搜索笔记、再拉详情”。这正好用于学习
- * service 编排和 agent tool 编排的差异。
+ * <p>当前分阶段 workflow 默认通过 {@link XhsSearchTools} 和 {@link XhsDetailTools}
+ * 暴露白名单工具；这个类只保留搜索和详情的底层实现，供包装类复用。
  */
 @Component
 public class XhsTravelTools {
@@ -37,49 +32,15 @@ public class XhsTravelTools {
         this.xhsNativeClient = xhsNativeClient;
     }
 
-    @Tool(name = XhsToolNames.COLLECT_CITY_CONTEXT, description = "采集某城市的小红书真实游记正文，并提炼景点、预约、避坑和推荐理由。")
-    public String collectCityContext(
-        @ToolParam(description = "城市名，例如：昆明。", required = true) String city,
-        @ToolParam(description = "该城市停留天数。", required = false) Integer days,
-        @ToolParam(description = "用户偏好，多个偏好可用逗号分隔。", required = false) String preferences,
-        @ToolParam(description = "输出语言，例如 zh/en/ja。", required = false) String language
-    ) {
-        long startedAt = System.currentTimeMillis();
-        log.info("[XHS-Tool] collectCityContext city={} days={} preferences={} language={}",
-            city, days, preferences, language);
-        try {
-            String cookie = cookie();
-            ContentCityRequest request = new ContentCityRequest(
-                city,
-                days == null || days <= 0 ? 1 : days,
-                split(preferences),
-                language
-            );
-            ContentCityContext context = xhsContentService.collectCity(cookie, request);
-            log.info("[XHS-Tool] collectCityContext 成功 city={} rawLength={} candidates={} elapsedMs={}",
-                city,
-                context.rawText() == null ? 0 : context.rawText().length(),
-                context.safeAttractions().size(),
-                elapsed(startedAt));
-            return success(XhsToolNames.COLLECT_CITY_CONTEXT, context);
-        } catch (Exception ex) {
-            return failure(XhsToolNames.COLLECT_CITY_CONTEXT, ex, startedAt);
-        }
-    }
-
-    @Tool(name = XhsToolNames.SEARCH_NOTES, description = "搜索小红书笔记，返回笔记 id、标题和 xsec_token 等基础信息，适合 Agent 决定是否继续拉详情。")
-    public String searchNotes(
-        @ToolParam(description = "搜索关键词，例如：昆明 老人 轻松 景点攻略。", required = true) String keyword,
-        @ToolParam(description = "页码，从 1 开始。", required = false) Integer page,
-        @ToolParam(description = "最多返回数量，建议 3 到 10。", required = false) Integer pageSize
-    ) {
+    public String searchNotes(String keyword, Integer page, Integer pageSize) {
         long startedAt = System.currentTimeMillis();
         int safePage = page == null || page <= 0 ? 1 : page;
-        int safePageSize = pageSize == null || pageSize <= 0 ? 5 : Math.min(pageSize, 10);
-        log.info("[XHS-Tool] searchNotes keyword={} page={} pageSize={}", keyword, safePage, safePageSize);
+        int returnLimit = XhsApiDefaults.TOOL_RETURN_LIMIT;
+        log.info("[XHS-Tool] searchNotes keyword={} page={} requestedPageSize={} apiPageSize={} returnLimit={}",
+            keyword, safePage, pageSize, XhsApiDefaults.SEARCH_PAGE_SIZE, returnLimit);
         try {
-            JsonNode root = xhsNativeClient.searchNotes(cookie(), keyword, safePage, 0, safePageSize);
-            List<Map<String, Object>> notes = simplifySearch(root, safePageSize);
+            JsonNode root = xhsNativeClient.searchNotes(cookie(), keyword, safePage, 0, XhsApiDefaults.SEARCH_PAGE_SIZE);
+            List<Map<String, Object>> notes = simplifySearch(root, keyword, returnLimit);
             log.info("[XHS-Tool] searchNotes 成功 keyword={} noteCount={} elapsedMs={}",
                 keyword, notes.size(), elapsed(startedAt));
             return success(XhsToolNames.SEARCH_NOTES, notes);
@@ -88,12 +49,7 @@ public class XhsTravelTools {
         }
     }
 
-    @Tool(name = XhsToolNames.NOTE_DETAIL, description = "获取小红书笔记详情正文和首图，用于理解真实游记内容。")
-    public String noteDetail(
-        @ToolParam(description = "小红书笔记 id。", required = true) String noteId,
-        @ToolParam(description = "搜索结果里的 xsec_token。", required = false) String xsecToken,
-        @ToolParam(description = "xsec_source，默认 pc_search。", required = false) String xsecSource
-    ) {
+    public String noteDetail(String noteId, String xsecToken, String xsecSource) {
         long startedAt = System.currentTimeMillis();
         log.info("[XHS-Tool] noteDetail noteId={} xsecSource={}", noteId, xsecSource);
         try {
@@ -116,12 +72,16 @@ public class XhsTravelTools {
             .orElseThrow(() -> new BizException("小红书 Cookie 未配置，请先在设置页填写“小红书 Cookie”。"));
     }
 
-    private List<Map<String, Object>> simplifySearch(JsonNode root, int limit) {
+    private List<Map<String, Object>> simplifySearch(JsonNode root, String keyword, int limit) {
         JsonNode items = root.path("data").path("items");
         if (!items.isArray()) {
+            log.info("[XHS-Tool] searchNotes 原始结果不是数组 keyword={} dataKeys={}",
+                keyword, root.path("data").properties().stream().map(Map.Entry::getKey).toList());
             return List.of();
         }
         java.util.ArrayList<Map<String, Object>> notes = new java.util.ArrayList<>();
+        int noteItems = 0;
+        int missingId = 0;
         for (JsonNode item : items) {
             if (notes.size() >= limit) {
                 break;
@@ -129,14 +89,25 @@ public class XhsTravelTools {
             if (!"note".equals(item.path("model_type").asText(""))) {
                 continue;
             }
+            noteItems++;
             JsonNode noteCard = item.path("note_card");
+            String noteId = XhsNoteJsons.noteId(item);
+            if (noteId.isBlank()) {
+                missingId++;
+                log.debug("[XHS-Tool] 跳过无 noteId 的搜索结果 rawId={} title={}",
+                    item.path("id").asText(""), XhsNoteJsons.title(noteCard));
+                continue;
+            }
             Map<String, Object> note = new LinkedHashMap<>();
-            note.put("note_id", item.path("id").asText(""));
-            note.put("xsec_token", item.path("xsec_token").asText(""));
-            note.put("title", noteCard.path("display_title").asText(""));
+            note.put("note_id", noteId);
+            note.put("xsec_token", XhsNoteJsons.xsecToken(item));
+            note.put("xsec_source", "pc_search");
+            note.put("title", XhsNoteJsons.title(noteCard));
             note.put("liked_count", noteCard.path("interact_info").path("liked_count").asText(""));
             notes.add(note);
         }
+        log.info("[XHS-Tool] searchNotes 原始结果统计 keyword={} rawItems={} noteItems={} missingId={} selected={}",
+            keyword, items.size(), noteItems, missingId, notes.size());
         return notes;
     }
 
@@ -183,16 +154,6 @@ public class XhsTravelTools {
         body.put(TravelToolResponseFields.TOOL, tool);
         body.put(TravelToolResponseFields.ERROR, ex.getMessage());
         return JsonUtils.toJsonString(body);
-    }
-
-    private List<String> split(String text) {
-        if (text == null || text.isBlank()) {
-            return List.of();
-        }
-        return Arrays.stream(text.split("[,，、;；\\s]+"))
-            .map(String::trim)
-            .filter(value -> !value.isBlank())
-            .toList();
     }
 
     private long elapsed(long startedAt) {

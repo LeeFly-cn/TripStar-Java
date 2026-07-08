@@ -98,7 +98,16 @@ public class AiStructuredOutputService {
         } catch (Exception ex) {
             log.warn("[AI-STRUCTURED] 结构化输出解析失败 agent={} threadId={} responseLength={} elapsedMs={} reason={}",
                 agent.id(), threadId, response.get().length(), System.currentTimeMillis() - startedAt, ex.getMessage());
+            log.debug("[AI-STRUCTURED] 结构化输出解析失败原文片段 agent={} threadId={} response={}",
+                agent.id(), threadId, snippet(response.get()));
             return Optional.empty();
         }
+    }
+
+    private String snippet(String text) {
+        if (text == null || text.length() <= 1000) {
+            return text;
+        }
+        return text.substring(0, 1000) + "...";
     }
 }

@@ -61,7 +61,7 @@ public class AiTextService {
             return Optional.of(content.trim());
         } catch (Exception ex) {
             log.warn("[AI] Spring AI Alibaba 调用失败 elapsedMs={} reason={}",
-                System.currentTimeMillis() - startedAt, ex.getMessage());
+                System.currentTimeMillis() - startedAt, ex.getMessage(), ex);
             return Optional.empty();
         }
     }
@@ -86,7 +86,7 @@ public class AiTextService {
                 .defaultOptions(options)
                 .build());
         } catch (Exception ex) {
-            log.warn("[AI] 运行时 DashScope ChatModel 创建失败 reason={}", ex.getMessage());
+            log.warn("[AI] 运行时 DashScope ChatModel 创建失败 reason={}", ex.getMessage(), ex);
             return Optional.empty();
         }
     }

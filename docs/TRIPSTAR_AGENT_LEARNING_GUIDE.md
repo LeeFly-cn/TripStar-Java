@@ -13,9 +13,12 @@ Vue 前端
   -> TripTaskService.submit()
   -> 后台线程执行规划任务
   -> WebSocket /api/trip/ws/{taskId} 推送进度
-  -> TravelContentService 采集小红书游记/图片内容
-  -> MapContextService 采集地图/POI/天气上下文
-  -> XhsExtractionAgent 提炼游记景点候选
+  -> TripResearchService 执行分阶段 Agent Workflow
+  -> XhsSearchAgent 搜索小红书笔记
+  -> XhsDetailAgent 读取详情并提炼游记景点候选
+  -> AmapPoiAgent 查询高德 POI 和经纬度
+  -> AmapWeatherAgent 查询高德天气
+  -> AmapHotelAgent 查询高德酒店和餐饮
   -> TripPlannerAgent 生成 TripPlan JSON
   -> TripReviewAgent 质检 TripPlan
   -> AI TripPlan 转 TripPlanResponse + graph_data
@@ -33,34 +36,43 @@ Vue 前端
 - `modules/ai/src/main/java/com/zkry/ai/service/AiTextService.java`
 - `modules/ai/src/main/java/com/zkry/ai/service/PromptResourceService.java`
 - `modules/content/src/main/java/com/zkry/content/service/XhsContentService.java`
+- `modules/content/src/main/java/com/zkry/content/service/XhsSearchTools.java`
+- `modules/content/src/main/java/com/zkry/content/service/XhsDetailTools.java`
 - `modules/content/src/main/java/com/zkry/content/service/XhsNativeClient.java`
 - `modules/content/src/main/java/com/zkry/content/service/XhsSignService.java`
-- `modules/map/src/main/java/com/zkry/map/service/MapContextService.java`
+- `modules/map/src/main/java/com/zkry/map/service/AmapGeoPoiTools.java`
+- `modules/map/src/main/java/com/zkry/map/service/AmapWeatherTools.java`
+- `modules/map/src/main/java/com/zkry/map/service/AmapHotelTools.java`
 - `modules/map/src/main/java/com/zkry/map/service/AmapMapContextService.java`
 
-## 2. 为什么先用 Service 编排，而不是一上来多 Agent
+## 2. 为什么用 Java 工作流控制多 Agent
 
-旅游规划看起来适合多智能体，但第一版不要直接做复杂 Agent Graph。原因是：
+旅游规划适合多智能体，但不适合让一个大 Agent 一次性拿全部工具。原因是：
 
-- 前端契约、任务状态、WebSocket、JSON 结构必须先稳定。
-- LLM 输出不稳定，如果没有解析、校验和明确失败机制，多 Agent 只会把问题放大。
-- 旅游规划本身可以先拆成普通服务流程，等行为稳定后再把服务包装成工具或子 Agent。
+- 前端进度必须对应真实阶段，不能靠 `pause()` 模拟。
+- 小红书、POI、天气、酒店有天然顺序，顺序应该由 Java 工作流保证。
+- 每个 Agent 只拿当前阶段工具白名单，才方便学习和排查。
+- 阶段内部仍由 Agent 自主决定关键词、参数和内容取舍。
 
 当前 `TripTaskService` 扮演“工作流调度器”：
 
 ```text
 initializing
-  -> attraction_search
+  -> travel_research
+  -> xhs_search
+  -> xhs_detail
+  -> amap_poi_search
   -> weather_search
   -> hotel_search
+  -> research_merge
   -> planning
   -> graph_building
   -> completed
 ```
 
-`TripTaskService` 仍然是工作流调度器，但部分阶段已经由 ReactAgent 承担。后续可以继续把外部能力包装成 Tool，让 Agent 在受控范围内调用。
+`TripTaskService` 只负责总状态；真正的资料研究顺序在 `TripResearchService`。如果没有配置小红书 Cookie、高德 Web Service Key 或 AI Key，任务会明确失败并提示去 Vue 设置页补配置；配置齐全后，会把小红书游记、高德 POI、酒店、餐饮和天气合并成上下文交给 Planner。
 
-当前 `attraction_search` 阶段会先调用 `TravelContentService` 采集小红书游记，再调用 `MapContextService` 采集地图上下文。如果没有配置小红书 Cookie、高德 Web Service Key 或 AI Key，任务会明确失败并提示去 Vue 设置页补配置；配置齐全后，会把游记提炼、真实 POI、酒店、餐饮和天气一起交给 Planner。
+小红书阶段是硬前置。`xhs_search` 没有拿到可读取的笔记，或 `xhs_detail` 没有拿到真实游记正文时，`TripResearchService` 会立即抛出业务异常，任务不会继续进入 `amap_poi_search`、`weather_search`、`hotel_search`。这样前端进度和真实执行保持一致，也方便定位 Cookie、签名、接口字段变化等问题。
 
 ## 3. 当前 AI 接入方式
 
@@ -80,8 +92,12 @@ AiAgentService
 当前主流程已经不是单纯 `ChatClient` 调用，而是第一版受控 ReactAgent 工作流：
 
 ```text
-XhsContentService
-  -> xhs-extraction-agent
+TripResearchService
+  -> xhs-search-agent
+  -> xhs-detail-agent
+  -> amap-poi-research-agent
+  -> amap-weather-research-agent
+  -> amap-hotel-research-agent
 
 TripAiPlannerService
   -> trip-planner-agent
@@ -99,6 +115,13 @@ ChatController
 - Prompt 统一放在资源目录，不硬编码在 Java 方法中。
 - 没有配置模型时返回 `Optional.empty()`，上层会返回明确业务错误。
 - 模型调用失败时记录日志并失败，不再回退到模拟数据。
+
+当前研究链路不做隐藏补数据：
+
+- 小红书搜索阶段没有笔记，立即停在 `xhs_search`。
+- 小红书详情阶段没有 `content_context` 或 `realData=false`，立即停在 `xhs_detail`。
+- 高德 POI、天气、酒店任一阶段没有 `map_context` 或 `realData=false`，立即停在对应阶段。
+- Tool 返回 `success=false` 是给 Agent 看的错误观察，不是最终成功结果；阶段校验会决定是否终止。
 
 当前默认配置仍可从 `application.yml`/环境变量初始化，但运行时以 Vue 设置页保存到 `/api/settings` 的值为准：
 
@@ -140,6 +163,16 @@ modules/ai/src/main/resources/prompts/tripstar/
 
 - `xhs-extraction-system.md`
 - `xhs-extraction-user.md`
+- `research-xhs-search-system.md`
+- `research-xhs-search-user.md`
+- `research-xhs-detail-system.md`
+- `research-xhs-detail-user.md`
+- `research-amap-poi-system.md`
+- `research-amap-poi-user.md`
+- `research-amap-weather-system.md`
+- `research-amap-weather-user.md`
+- `research-amap-hotel-system.md`
+- `research-amap-hotel-user.md`
 - `planner-system.md`
 - `planner-user.md`
 - `review-system.md`
@@ -208,7 +241,6 @@ modules/map/src/main/java/com/zkry/map
 
 核心类：
 
-- `MapContextService`：地图上下文接口，业务层只依赖它。
 - `AmapMapContextService`：高德地图实现，负责地理编码、POI 搜索、天气查询。
 - `MapPlanningContext`：一次旅行的地图上下文。
 - `MapCityContext`：单个城市的景点、酒店、餐饮、天气。
@@ -230,7 +262,11 @@ tripstar:
 
 ```text
 TripTaskService
-  -> MapContextService.collect()
+  -> TripResearchService
+  -> AmapPoiAgent / AmapWeatherAgent / AmapHotelAgent
+  -> AmapGeoPoiTools / AmapWeatherTools / AmapHotelTools
+  -> AmapTravelTools
+  -> AmapMapContextService.geocode/searchPois/weatherForecasts
   -> MapPlanningContext
   -> PromptResourceService 渲染 planner-user.md
   -> LLM 优先使用真实 POI/酒店/餐饮/天气
@@ -238,7 +274,7 @@ TripTaskService
 
 如果 LLM 没有启用，任务会明确失败。这样做是为了避免“看起来成功但其实是模拟行程”的误判。你仍然可以单独调用/调试地图服务日志，观察真实 POI、酒店、餐饮和天气是否采集成功。
 
-这个设计对应智能体里的“工具调用”：现在它还是普通 Java service，将来可以包装成 `WeatherTool`、`PoiSearchTool`、`HotelSearchTool` 给 Spring AI Alibaba Agent 使用。
+这个设计对应智能体里的“工具调用”：高德能力已经包装成 `AmapGeoPoiTools`、`AmapWeatherTools`、`AmapHotelTools` 给 Spring AI Alibaba Agent 使用。
 
 ## 7. 小红书/游记内容提炼如何设计
 
@@ -284,6 +320,31 @@ AttractionExtractionService
   }
 ]
 ```
+
+当前坐标补全不放在小红书详情 Agent 里，而是交给高德 POI Agent：
+
+```text
+小红书搜索阶段
+  -> 底层接口固定按 20 条请求，避免小 page_size 返回空 items
+  -> xhs_search_notes Tool 固定最多返回 5 条笔记
+  -> XhsSearchAgent 原样复制 Tool 返回的 note_id/title/xsec_token
+
+小红书详情阶段
+  -> XhsDetailAgent 读取搜索结果里的全部笔记详情
+  -> rawText 保留“笔记1/笔记2”边界
+  -> 提炼景点候选、推荐理由、预约提示、避坑建议
+
+高德 POI 阶段
+  -> 接收 {{xhs_attractions}}
+  -> 优先为小红书候选调用 amap_poi_search / amap_geocode
+  -> 输出带高德地址和经纬度的 map_context.cities[].attractions
+
+最终 Planner
+  -> 坐标以 map_context 为准
+  -> 推荐理由和预约信息以 content_context 为准
+```
+
+这样职责更清楚：小红书 Agent 负责理解游记内容，高德 Agent 负责地图事实校准。相比 Python 版 service 循环 geocode，Java 版保留了 Agent 自主判断关键词、匹配 POI 和排除用户不想去地点的学习价值。
 
 小红书为什么当前不降级：
 

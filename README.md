@@ -63,9 +63,10 @@ npm run dev
 ## 核心亮点
 
 - **Java 服务端改写**：后端基于 Java 21、Spring Boot 4 和 Maven 多模块组织，方便 Java 开发者学习和二开。
-- **Spring AI Alibaba ReactAgent**：资料研究阶段由 Agent 自主调用高德 Tool 和小红书 Tool，更接近真实 Agentic Workflow。
+- **分阶段 ReactAgent 工作流**：小红书搜索、详情提炼、高德 POI、天气、酒店餐饮、最终规划、结果质检都拆成独立 Agent。
 - **小红书双形态接入**：支持 `service`、`tool`、`both` 三种模式，既能对标 Python 版确定性采集，也能学习 Agent 调工具。
-- **高德工具化**：POI、酒店、餐饮、天气、坐标查询都封装为 Tool，交给资料研究智能体按用户需求调用。
+- **高德工具化**：POI、酒店、餐饮、天气、坐标查询都封装为 Spring AI Tool，并按阶段挂给对应 Agent。
+- **小红书候选 + 高德校准**：小红书负责“真实游记、推荐理由、避坑和预约提醒”，高德 POI Agent 负责“官方地址、POI 类型和经纬度”。
 - **Structured Output**：规划、研究、质检等 LLM 输出使用 Spring AI 结构化输出转 DTO，代码比手写 JSON 提取更易读。
 - **Prompt 资源化管理**：较长提示词统一放在 `modules/ai/src/main/resources/prompts/tripstar/`，避免硬编码散落在业务代码里。
 - **WebSocket 进度推送**：长耗时规划任务先返回 `task_id`，前端通过轮询或 WebSocket 获取进度。
@@ -132,6 +133,8 @@ curl http://localhost:8080/api/trip/status/192aa4c1
 
 ## 系统架构
 
+当前版本的核心不是“一个大 Agent 拿所有工具自己乱跑”，而是 **Java 工作流控制阶段顺序，ReactAgent 负责阶段内推理和 Tool 调用**。这样既能学习 Agent Tool Calling，又能让前端进度、日志和失败位置更清楚。
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -140,9 +143,10 @@ sequenceDiagram
     participant API as "TripController"
     participant Task as "TripTaskService"
     participant Research as "TripResearchService"
-    participant Agent as "TravelResearchAgent(ReactAgent)"
-    participant AMap as "AmapTravelTools"
-    participant XHS as "XhsTravelTools / XhsContentService"
+    participant XHSAgent as "XhsSearch/DetailAgent"
+    participant AMapAgent as "AmapPoi/Weather/HotelAgent"
+    participant XHS as "XhsSearchTools / XhsDetailTools / XhsContentService"
+    participant AMap as "Amap*Tools"
     participant Planner as "TripAiPlannerService"
     participant SO as "AiStructuredOutputService"
     participant Graph as "TripPlanResponseFactory"
@@ -152,14 +156,17 @@ sequenceDiagram
     Task-->>Vue: task_id, status_url, ws_url
     Vue->>Task: WebSocket /api/trip/ws/{taskId}
 
-    Task->>Research: research(taskId, request)
-    Research->>Agent: 调用资料研究智能体
-    Agent->>AMap: 查询 POI / 酒店 / 餐饮 / 天气 / 坐标
-    Agent->>XHS: 搜索小红书游记 / 提取笔记内容
-    XHS-->>Agent: 游记摘要、景点候选、图片线索
-    AMap-->>Agent: 地图、天气、POI 上下文
-    Agent->>SO: Structured Output 转 TravelResearchReport
+    Task->>Research: research(taskId, request, progressReporter)
+    Research->>XHSAgent: 小红书搜索/详情阶段
+    XHSAgent->>XHS: xhs_search_notes / xhs_note_detail
+    XHS-->>XHSAgent: 游记正文、景点候选、图片线索
+    XHSAgent->>SO: Structured Output 转 ContentPlanningContext
+    Research->>AMapAgent: 高德 POI / 天气 / 酒店阶段
+    AMapAgent->>AMap: amap_geocode / poi / weather / hotel
+    AMap-->>AMapAgent: 地图、天气、POI 上下文
+    AMapAgent->>SO: Structured Output 转 MapPlanningContext
     SO-->>Research: 结构化资料研究结果
+    Research-->>Task: 合并后的 MapPlanningContext + ContentPlanningContext
 
     Task->>Planner: plan(taskId, request, mapContext, contentContext)
     Planner->>SO: Structured Output 转 TripPlanResponse
@@ -168,6 +175,82 @@ sequenceDiagram
     Graph-->>Task: 完整 TripPlanResponse
     Task-->>Vue: WebSocket 推送 completed + result
 ```
+
+## 最新架构：分阶段 Multi-Agent Tool Workflow
+
+```text
+TripTaskService
+  -> 校验运行时配置：AI Key / 模型 / 小红书 Cookie / 高德 Key
+  -> 推送前端兼容进度：attraction_search / weather_search / hotel_search / planning
+
+TripResearchService
+  -> XhsSearchAgent
+       Tool: xhs_search_notes
+       说明：底层固定按 page_size=20 请求，小红书 Tool 最多返回 5 条笔记
+  -> XhsDetailAgent
+       Tool: xhs_note_detail
+       说明：读取搜索结果里的全部笔记详情，提炼 rawText 和景点候选
+  -> AmapPoiAgent
+       Tool: amap_geocode / amap_poi_search
+       说明：优先校准小红书候选景点，再补充高德 POI
+  -> AmapWeatherAgent
+       Tool: amap_weather
+       说明：查询天气，作为每日行程节奏约束
+  -> AmapHotelAgent
+       Tool: amap_hotel_search / amap_restaurant_search
+       说明：根据住宿偏好和用户备注提炼酒店、餐饮关键词
+  -> 合并 ContentPlanningContext + MapPlanningContext
+
+TripAiPlannerService
+  -> TripPlannerAgent
+       输入：用户请求 + 小红书上下文 + 高德上下文 + Structured Output schema
+       输出：TripPlan
+  -> TripReviewAgent
+       输入：TripPlan + 用户硬约束
+       输出：ReviewResult，检查天数、城市、字段和约束是否满足
+
+TripPlanResponseFactory
+  -> 转换成前端需要的 TripPlanResponse
+  -> 生成知识图谱 nodes / edges / categories
+```
+
+### Agent 与 Tool 分工
+
+| 阶段 | Agent / Service | Tool 白名单 | 输入 | 输出 |
+| --- | --- | --- | --- | --- |
+| 小红书搜索 | `XhsSearchAgent` | `xhs_search_notes` | 城市、天数、偏好、备注 | `XhsSearchResearchResult`，每城最多 5 条笔记引用 |
+| 小红书详情 | `XhsDetailAgent` | `xhs_note_detail` | 搜索阶段的 `note_id/xsec_token` | `ContentPlanningContext`，含 rawText、候选景点、避坑、预约 |
+| 高德 POI | `AmapPoiAgent` | `amap_geocode`, `amap_poi_search` | 小红书候选景点、用户排除地点 | `MapPlanningContext.attractions`，含地址和经纬度 |
+| 高德天气 | `AmapWeatherAgent` | `amap_weather` | 城市 | `MapPlanningContext.weatherForecasts` |
+| 高德酒店餐饮 | `AmapHotelAgent` | `amap_hotel_search`, `amap_restaurant_search` | 城市、住宿偏好、用户备注 | `MapPlanningContext.hotels/restaurants` |
+| 行程规划 | `TripPlannerAgent` | 无外部 Tool | 用户请求、小红书、高德上下文 | `TripPlan` |
+| 行程质检 | `TripReviewAgent` | 无外部 Tool | `TripPlan`、天数、城市、硬约束 | `ReviewResult` |
+
+### 小红书数据流
+
+```text
+小红书搜索接口
+  -> 底层固定请求 20 条，避免 page_size=5/10 返回 success=true 但无 items
+  -> XHS Tool 截取最多 5 条返回给 Agent
+  -> XhsSearchAgent 原样复制 Tool 返回的 note_id/title/xsec_token
+  -> XhsDetailAgent 读取全部搜索结果详情
+  -> rawText 保留“笔记1/笔记2/笔记3”边界
+  -> attractions 提炼景点名、推荐理由、游玩时长、预约提醒、避坑建议
+  -> AmapPoiAgent 使用高德工具校准坐标和官方 POI
+  -> PlannerAgent 只负责最终行程编排，不再从一堆原文里重新做基础提炼
+```
+
+### 高德限流与真实数据策略
+
+ReactAgent 一轮可能返回多个 Tool Call，例如连续查询故宫、天坛、景山。为了避免瞬间触发高德 `CUQPS_HAS_EXCEEDED_THE_LIMIT`，高德 REST 统一入口 `AmapMapContextService` 做了串行节流和短重试：
+
+```yaml
+tripstar.map.amap.min-interval-ms: 350
+tripstar.map.amap.rate-limit-retries: 2
+tripstar.map.amap.rate-limit-retry-delay-ms: 1000
+```
+
+项目默认不使用模拟数据。小红书、AI 或高德配置缺失时直接提示；小红书阶段没有真实笔记、高德阶段没有真实 POI/天气/酒店数据时，任务会在当前阶段失败，方便定位问题。
 
 ## 模块结构
 
@@ -340,12 +423,12 @@ npm run dev
 1. `app/src/main/java/com/zkry/api/trip/TripController.java`：看前端请求如何进入后端。
 2. `modules/trip/src/main/java/com/zkry/trip/service/TripTaskService.java`：看异步任务、进度状态和 WebSocket 推送。
 3. `modules/trip/src/main/java/com/zkry/trip/service/TripResearchService.java`：看资料研究阶段如何组合 service/tool/both。
-4. `modules/map/src/main/java/com/zkry/map/service/AmapTravelTools.java`：看高德能力如何暴露给 Agent。
-5. `modules/content/src/main/java/com/zkry/content/service/XhsTravelTools.java`：看小红书能力如何暴露给 Agent。
+4. `modules/map/src/main/java/com/zkry/map/service/AmapGeoPoiTools.java` / `AmapWeatherTools.java` / `AmapHotelTools.java`：看高德阶段工具白名单。
+5. `modules/content/src/main/java/com/zkry/content/service/XhsSearchTools.java` / `XhsDetailTools.java`：看小红书阶段工具白名单。
 6. `modules/ai/src/main/java/com/zkry/ai/service/AiAgentService.java`：看 ReactAgent 的统一调用入口。
 7. `modules/ai/src/main/java/com/zkry/ai/service/AiStructuredOutputService.java`：看 Structured Output 如何把 LLM 输出转 DTO。
 8. `modules/trip/src/main/java/com/zkry/trip/service/TripAiPlannerService.java`：看最终路线规划和质检如何执行。
-9. `modules/trip/src/main/java/com/zkry/trip/service/TripPlanResponseFactory.java`：看知识图谱和兜底结构如何组装。
+9. `modules/trip/src/main/java/com/zkry/trip/service/TripPlanResponseFactory.java`：看知识图谱结果结构如何组装。
 
 配套文档：
 

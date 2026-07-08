@@ -72,7 +72,7 @@ public class TripTaskService {
             safeLog(request.end_date()),
             request.safePreferences(),
             tripAiPlannerService.isAvailable());
-        update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.SUBMITTED, 5, TripTaskMessages.SUBMITTED, null, null);
+        update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.SUBMITTED, TripTaskProgress.SUBMITTED, TripTaskMessages.SUBMITTED, null, null);
         CompletableFuture.runAsync(() -> runPlanning(taskId, request), executorService);
         return new SubmitTripPlanResponse(
             taskId,
@@ -139,10 +139,14 @@ public class TripTaskService {
             log.info("[TripTask] 开始执行任务 taskId={} city={} language={} transportation={} accommodation={}",
                 taskId, request.primaryCity(), request.safeLanguage(), request.safeTransportation(), request.safeAccommodation());
             pause();
-            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.INITIALIZING, 10, TripTaskMessages.INITIALIZING, null, null);
+            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.INITIALIZING, TripTaskProgress.INITIALIZING, TripTaskMessages.INITIALIZING, null, null);
             pause();
-            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.TRAVEL_RESEARCH, 24, TripTaskMessages.TRAVEL_RESEARCH, null, null);
-            TripResearchService.ResearchContext researchContext = tripResearchService.research(taskId, request);
+            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.TRAVEL_RESEARCH, TripTaskProgress.TRAVEL_RESEARCH, TripTaskMessages.TRAVEL_RESEARCH, null, null);
+            TripResearchService.ResearchContext researchContext = tripResearchService.research(
+                taskId,
+                request,
+                (stage, progress, message) -> update(taskId, TripTaskStatus.PROCESSING, stage, progress, message, null, null)
+            );
             ContentPlanningContext contentContext = researchContext.contentContext();
             MapPlanningContext mapContext = researchContext.mapContext();
             log.info("[TripTask] 资料研究阶段完成 taskId={} mapRealData={} mapCities={} contentRealData={} contentCities={} summary={}",
@@ -159,11 +163,7 @@ public class TripTaskService {
                 throw new BizException("小红书内容采集失败：" + contentContext.message());
             }
             pause();
-            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.WEATHER_SEARCH, 46, mapStageMessage(mapContext, "天气"), null, null);
-            pause();
-            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.HOTEL_SEARCH, 64, mapStageMessage(mapContext, "酒店和餐饮"), null, null);
-            pause();
-            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.PLANNING, 85, TripTaskMessages.PLANNING, null, null);
+            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.PLANNING, TripTaskProgress.PLANNING, TripTaskMessages.PLANNING, null, null);
             TripPlanResponse response = tripAiPlannerService.plan(taskId, request, mapContext, contentContext)
                 .orElseThrow(() -> new BizException("Spring AI Alibaba 未能生成可解析的行程 JSON，请检查 AI Key、模型名和提示词约束。"));
             log.info("[TripTask] 规划结果生成 taskId={} days={} graphNodes={}",
@@ -171,14 +171,14 @@ public class TripTaskService {
                 response.data() == null || response.data().days() == null ? 0 : response.data().days().size(),
                 response.graph_data() == null || response.graph_data().nodes() == null ? 0 : response.graph_data().nodes().size());
             pause();
-            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.GRAPH_BUILDING, 95, TripTaskMessages.GRAPH_BUILDING, null, null);
+            update(taskId, TripTaskStatus.PROCESSING, TripTaskStage.GRAPH_BUILDING, TripTaskProgress.GRAPH_BUILDING, TripTaskMessages.GRAPH_BUILDING, null, null);
             pause();
-            update(taskId, TripTaskStatus.COMPLETED, TripTaskStage.COMPLETED, 100, TripTaskMessages.COMPLETED, response, null);
+            update(taskId, TripTaskStatus.COMPLETED, TripTaskStage.COMPLETED, TripTaskProgress.DONE, TripTaskMessages.COMPLETED, response, null);
             log.info("[TripTask] 任务执行完成 taskId={} elapsedMs={}", taskId, System.currentTimeMillis() - startedAt);
         } catch (Exception ex) {
             log.error("[TripTask] 任务执行失败 taskId={} elapsedMs={} reason={}",
                 taskId, System.currentTimeMillis() - startedAt, ex.getMessage(), ex);
-            update(taskId, TripTaskStatus.FAILED, TripTaskStage.FAILED, 100, TripTaskMessages.FAILED, null, ex.getMessage());
+            update(taskId, TripTaskStatus.FAILED, TripTaskStage.FAILED, TripTaskProgress.DONE, TripTaskMessages.FAILED, null, ex.getMessage());
         }
     }
 
@@ -219,13 +219,6 @@ public class TripTaskService {
             log.warn("[TripTask] 运行时配置校验失败 missing={}", missing);
             throw new BizException(message);
         }
-    }
-
-    private String mapStageMessage(MapPlanningContext mapContext, String subject) {
-        if (mapContext.realData()) {
-            return "已获取地图" + subject + "上下文，正在整理给规划智能体...";
-        }
-        return mapContext.message() + " 正在继续准备" + subject + "候选信息。";
     }
 
     /**

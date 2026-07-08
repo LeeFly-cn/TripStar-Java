@@ -11,8 +11,13 @@ public final class TripTaskStage {
     public static final String SUBMITTED = "submitted";
     public static final String INITIALIZING = "initializing";
     public static final String TRAVEL_RESEARCH = "travel_research";
+    public static final String ATTRACTION_SEARCH = "attraction_search";
+    public static final String XHS_SEARCH = "xhs_search";
+    public static final String XHS_DETAIL = "xhs_detail";
+    public static final String AMAP_POI_SEARCH = "amap_poi_search";
     public static final String WEATHER_SEARCH = "weather_search";
     public static final String HOTEL_SEARCH = "hotel_search";
+    public static final String RESEARCH_MERGE = "research_merge";
     public static final String PLANNING = "planning";
     public static final String GRAPH_BUILDING = "graph_building";
     public static final String COMPLETED = "completed";
