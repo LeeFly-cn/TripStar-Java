@@ -11,6 +11,7 @@ app/runtime_settings.json
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
+AGENTS.md
 logs/
 *.log
 .codegraph
