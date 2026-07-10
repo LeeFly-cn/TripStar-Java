@@ -23,7 +23,7 @@
 
 这个版本的核心目标不是简单把 Python 代码逐行翻译成 Java，而是把 TripStar 的能力拆成更适合 Java 工程学习的模块：
 
-- 用 `ReactAgent` 作为资料研究智能体，让大模型主动调用高德和小红书工具。
+- 用 Spring AI Alibaba `StateGraph` 编排资料研究阶段，并用 `ReactAgent` 让大模型主动调用高德和小红书工具。
 - 用 Spring AI `BeanOutputConverter` 做结构化输出，减少手写 JSON 修复逻辑。
 - 用小红书真实游记内容辅助 LLM 提炼景点、避坑建议、预约提醒和用户口吻偏好。
 - 用高德地图工具查询 POI、酒店、餐饮、天气和坐标信息。
@@ -45,7 +45,7 @@
 原 TripStar 是一个基于 Python FastAPI、HelloAgents、多智能体和 Vue 前端的 AI 文旅规划平台。本仓库的定位是：
 
 - **后端 Java 化**：使用 Spring Boot 4 多模块工程重写后端主流程。
-- **Agent 学习化**：突出 Spring AI Alibaba `ReactAgent`、工具调用、结构化输出和 Prompt 管理。
+- **Agent 学习化**：突出 Spring AI Alibaba `StateGraph`、`ReactAgent`、工具调用、结构化输出和 Prompt 管理。
 - **前端兼容化**：尽量保留原 Vue 前端需要的 `/api/trip/plan`、`/api/trip/status/{taskId}`、`/api/trip/ws/{taskId}` 等接口形态。
 - **数据真实化**：小红书和高德未配置时直接提示缺配置，不再用模拟数据假装成功。
 
@@ -63,11 +63,12 @@ npm run dev
 ## 核心亮点
 
 - **Java 服务端改写**：后端基于 Java 21、Spring Boot 4 和 Maven 多模块组织，方便 Java 开发者学习和二开。
-- **Spring AI Alibaba ReactAgent**：资料研究阶段由 Agent 自主调用高德 Tool 和小红书 Tool，更接近真实 Agentic Workflow。
+- **Spring AI Alibaba Graph + ReactAgent**：资料研究阶段由 `StateGraph` 控制顺序，阶段内部由 Agent 自主调用高德 Tool 和小红书 Tool。
 - **小红书双形态接入**：支持 `service`、`tool`、`both` 三种模式，既能对标 Python 版确定性采集，也能学习 Agent 调工具。
 - **高德工具化**：POI、酒店、餐饮、天气、坐标查询都封装为 Tool，交给资料研究智能体按用户需求调用。
 - **Structured Output**：规划、研究、质检等 LLM 输出使用 Spring AI 结构化输出转 DTO，代码比手写 JSON 提取更易读。
 - **Prompt 资源化管理**：较长提示词统一放在 `modules/ai/src/main/resources/prompts/tripstar/`，避免硬编码散落在业务代码里。
+- **AI Trace 调试文件**：每次 Agent 调用会落盘系统提示词、用户提示词和模型原始输出，方便排查 Prompt、工具返回和结构化输出问题。
 - **WebSocket 进度推送**：长耗时规划任务先返回 `task_id`，前端通过轮询或 WebSocket 获取进度。
 - **知识图谱输出**：后端根据行程结果生成 `nodes` 和 `edges`，供 Vue 前端用 ECharts 展示城市、天数、景点、预算之间的关系。
 
@@ -131,6 +132,29 @@ curl http://localhost:8080/api/trip/status/192aa4c1
 ```
 
 ## 系统架构
+
+### 资料研究 Workflow Graph
+
+`TripResearchService` 使用 Spring AI Alibaba `StateGraph` 编排资料研究。小红书 `service/tool/both` 不是在节点内部偷偷跳过，而是由 Graph 条件边决定路线：
+
+```mermaid
+flowchart TD
+    START([START]) --> ROUTE[xhs_mode_route]
+    ROUTE -- service --> XHS_SERVICE[xhs_service_optional]
+    ROUTE -- tool --> XHS_SEARCH[xhs_search_agent]
+    ROUTE -- both --> XHS_SERVICE
+    XHS_SERVICE -- service_ready --> XHS_READY[xhs_ready_check]
+    XHS_SERVICE -- service_then_tool --> XHS_SEARCH
+    XHS_SEARCH --> XHS_DETAIL[xhs_detail_agent]
+    XHS_DETAIL --> XHS_READY
+    XHS_READY --> AMAP_POI[amap_poi_agent]
+    AMAP_POI --> WEATHER[amap_weather_agent]
+    WEATHER --> HOTEL[amap_hotel_agent]
+    HOTEL --> MERGE[merge_research_context]
+    MERGE --> END([END])
+```
+
+每个 Agent 只拿当前阶段的工具白名单：小红书搜索只拿 `xhs_search_notes`，小红书详情只拿 `xhs_note_detail`，高德 POI、天气、酒店餐饮也分别只拿自己的工具。
 
 ```mermaid
 sequenceDiagram
@@ -243,6 +267,8 @@ cp .env.example .env
 AI_DASHSCOPE_ENABLED=true
 AI_DASHSCOPE_API_KEY=your_dashscope_key_here
 AI_DASHSCOPE_CHAT_MODEL=qwen-plus
+AI_TRACE_ENABLED=true
+AI_TRACE_DIR=./logs/ai-trace
 
 AMAP_ENABLED=true
 AMAP_KEY=your_amap_web_service_key_here
@@ -267,6 +293,14 @@ service  Java service 主动采集小红书，再把结果交给规划流程。
 tool     ReactAgent 自己决定什么时候调用小红书 Tool。
 both     service 和 tool 两条链路都执行并合并上下文，适合学习对比。
 ```
+
+AI Trace 说明：
+
+```text
+logs/ai-trace/yyyy-MM-dd/*.md
+```
+
+每次 ReactAgent 调用都会写入一个 Markdown 文件，包含系统提示词、用户提示词、工具列表、模型原始输出和耗时。排查“小红书没有返回笔记”“高德酒店餐饮 realData 判断错误”“结构化输出解析失败”时，优先看对应 `threadId` 的 trace 文件。
 
 小红书签名资产已经内置在 Java content 模块：
 
@@ -343,13 +377,14 @@ npm run dev
 
 1. `app/src/main/java/com/zkry/api/trip/TripController.java`：看前端请求如何进入后端。
 2. `modules/trip/src/main/java/com/zkry/trip/service/TripTaskService.java`：看异步任务、进度状态和 WebSocket 推送。
-3. `modules/trip/src/main/java/com/zkry/trip/service/TripResearchService.java`：看资料研究阶段如何组合 service/tool/both。
+3. `modules/trip/src/main/java/com/zkry/trip/service/TripResearchService.java`：看 `StateGraph` 如何编排小红书、高德和合并节点。
 4. `modules/map/src/main/java/com/zkry/map/service/AmapGeoPoiTools.java` / `AmapWeatherTools.java` / `AmapHotelTools.java`：看高德阶段工具白名单。
 5. `modules/content/src/main/java/com/zkry/content/service/XhsSearchTools.java` / `XhsDetailTools.java`：看小红书阶段工具白名单。
 6. `modules/ai/src/main/java/com/zkry/ai/service/AiAgentService.java`：看 ReactAgent 的统一调用入口。
-7. `modules/ai/src/main/java/com/zkry/ai/service/AiStructuredOutputService.java`：看 Structured Output 如何把 LLM 输出转 DTO。
-8. `modules/trip/src/main/java/com/zkry/trip/service/TripAiPlannerService.java`：看最终路线规划和质检如何执行。
-9. `modules/trip/src/main/java/com/zkry/trip/service/TripPlanResponseFactory.java`：看知识图谱结果结构如何组装。
+7. `modules/ai/src/main/java/com/zkry/ai/service/AiPromptTraceService.java`：看 Agent 提示词和原始输出如何落盘。
+8. `modules/ai/src/main/java/com/zkry/ai/service/AiStructuredOutputService.java`：看 Structured Output 如何把 LLM 输出转 DTO。
+9. `modules/trip/src/main/java/com/zkry/trip/service/TripAiPlannerService.java`：看最终路线规划和质检如何执行。
+10. `modules/trip/src/main/java/com/zkry/trip/service/TripPlanResponseFactory.java`：看知识图谱结果结构如何组装。
 
 配套文档：
 
@@ -367,6 +402,7 @@ npm run dev
 | 小红书 | Python service 深度集成 | Java service + Tool + both 模式 |
 | 高德/地图 | Python service 或工具 | Java Tool 交给 Agent 主动调用 |
 | 结构化输出 | Pydantic + JSON 解析修复 | Spring AI `BeanOutputConverter` |
+| Workflow | HelloAgents 编排 | Spring AI Alibaba `StateGraph` 条件边编排 |
 | 任务进度 | 异步任务 + 轮询/WebSocket | Java 异步任务 + WebSocket |
 | 学习重点 | Python Agent 工程 | Java Agent 工程、接口抽象、Prompt 资源化 |
 
@@ -390,8 +426,10 @@ npm run dev
 - [x] 小红书真实内容接入
 - [x] 高德 POI、天气、酒店、餐饮 Tool
 - [x] Spring AI Alibaba ReactAgent 调工具
+- [x] Spring AI Alibaba StateGraph Workflow 编排
 - [x] Structured Output 替代复杂手写 JSON 解析
 - [x] Prompt 资源目录统一管理
+- [x] Agent Prompt / 输出 Trace 文件
 - [x] 日志和注释增强，便于学习执行过程
 - [ ] 可直接解析小红书小红书指定笔记生成旅游计划
 - [ ] 增加自有景点数据库，实现用户级访问

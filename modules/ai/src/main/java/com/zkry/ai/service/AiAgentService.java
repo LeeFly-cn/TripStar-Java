@@ -17,9 +17,11 @@ public class AiAgentService {
     private static final Logger log = LoggerFactory.getLogger(AiAgentService.class);
 
     private final AiTextService aiTextService;
+    private final AiPromptTraceService promptTraceService;
 
-    public AiAgentService(AiTextService aiTextService) {
+    public AiAgentService(AiTextService aiTextService, AiPromptTraceService promptTraceService) {
         this.aiTextService = aiTextService;
+        this.promptTraceService = promptTraceService;
     }
 
     public boolean isAvailable() {
@@ -100,14 +102,43 @@ public class AiAgentService {
             AssistantMessage message = agent.call(userPrompt, config);
             String content = message == null ? "" : message.getText();
             if (content == null || content.isBlank()) {
+                promptTraceService.writeFailure(
+                    agentName,
+                    safeThreadId,
+                    instruction,
+                    userPrompt,
+                    toolNames(methodTools),
+                    content,
+                    "ReactAgent 返回空内容",
+                    System.currentTimeMillis() - startedAt
+                );
                 log.warn("[AI-AGENT] ReactAgent 返回空内容 agent={} threadId={} elapsedMs={}",
                     agentName, safeThreadId, System.currentTimeMillis() - startedAt);
                 return Optional.empty();
             }
+            promptTraceService.writeSuccess(
+                agentName,
+                safeThreadId,
+                instruction,
+                userPrompt,
+                toolNames(methodTools),
+                content,
+                System.currentTimeMillis() - startedAt
+            );
             log.info("[AI-AGENT] ReactAgent 调用成功 agent={} threadId={} responseLength={} elapsedMs={}",
                 agentName, safeThreadId, content.length(), System.currentTimeMillis() - startedAt);
             return Optional.of(content.trim());
         } catch (Exception ex) {
+            promptTraceService.writeFailure(
+                agentName,
+                threadId == null || threadId.isBlank() ? agentName : threadId,
+                instruction,
+                userPrompt,
+                toolNames(methodTools),
+                "",
+                ex.getMessage(),
+                System.currentTimeMillis() - startedAt
+            );
             log.warn("[AI-AGENT] ReactAgent 调用失败 agent={} threadId={} elapsedMs={} reason={}",
                 agentName,
                 threadId == null || threadId.isBlank() ? agentName : threadId,

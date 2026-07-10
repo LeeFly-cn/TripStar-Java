@@ -1,8 +1,9 @@
 # TripStar Java 代码学习导读
 
-这份文档按“一个任务来了，代码怎么跑”的顺序讲 Java 版 TripStar。当前版本已经进入分阶段 Agent Workflow 阶段：
+这份文档按“一个任务来了，代码怎么跑”的顺序讲 Java 版 TripStar。当前版本已经进入 Spring AI Alibaba Graph + 分阶段 Agent Workflow 阶段：
 
-- Java 工作流控制阶段顺序，每个阶段由一个 ReactAgent 负责。
+- `TripResearchService` 使用 Spring AI Alibaba `StateGraph` 控制资料研究阶段顺序。
+- 每个资料研究节点内部由一个 ReactAgent 负责。
 - 高德 POI、酒店、餐饮、天气分别由不同 Agent 调用白名单 Tool 获取。
 - 小红书支持 `service` / `tool` / `both` 三种模式。
 - LLM JSON 输出主要使用 Spring AI `BeanOutputConverter` 结构化输出解析。
@@ -24,7 +25,7 @@ modules/map
   高德 REST 客户端能力、高德 Tool、POI/天气 DTO
 
 modules/ai
-  Spring AI Alibaba、ReactAgent、Structured Output、Prompt 资源读取、Agent 常量
+  Spring AI Alibaba、ReactAgent、Structured Output、Prompt 资源读取、Agent 常量、AI Trace 文件
 
 common/*
   通用异常、JSON、Web、日志、运行时配置
@@ -60,6 +61,7 @@ modules/content/src/main/java/com/zkry/content/service/XhsNativeClient.java
 modules/content/src/main/java/com/zkry/content/service/XhsSignService.java
 
 modules/ai/src/main/java/com/zkry/ai/service/AiAgentService.java
+modules/ai/src/main/java/com/zkry/ai/service/AiPromptTraceService.java
 modules/ai/src/main/java/com/zkry/ai/service/AiStructuredOutputService.java
 modules/ai/src/main/java/com/zkry/ai/agent/TripstarAgent.java
 modules/ai/src/main/java/com/zkry/ai/prompt/TripstarPrompt.java
@@ -202,7 +204,7 @@ catch Exception
   -> WebSocket 推送错误给前端
 ```
 
-## 4. 分阶段 Research Workflow 是什么
+## 4. Spring AI Alibaba Graph 资料研究
 
 研究阶段入口：
 
@@ -210,19 +212,43 @@ catch Exception
 TripResearchService.research(taskId, request)
 ```
 
-它负责把“查资料”从主流程里拆出来，并保证阶段顺序：
+它负责把“查资料”从主流程里拆出来，并用 `StateGraph` 保证阶段顺序：
 
 ```text
-TripResearchService
-  -> 读取 xhs_mode
-  -> 必要时先跑小红书 service
-  -> XhsSearchAgent 搜索笔记
-  -> XhsDetailAgent 读取详情并提炼内容
-  -> AmapPoiAgent 查询经纬度和 POI
-  -> AmapWeatherAgent 查询天气
-  -> AmapHotelAgent 查询酒店和餐饮
-  -> 合并各阶段结果
+StateGraph
+  START
+    -> xhs_mode_route
+       service -> xhs_service_optional
+       tool    -> xhs_search_agent -> xhs_detail_agent
+       both    -> xhs_service_optional -> xhs_search_agent -> xhs_detail_agent
+    -> xhs_ready_check
+    -> amap_poi_agent
+    -> amap_weather_agent
+    -> amap_hotel_agent
+    -> merge_research_context
+  END
 ```
+
+读源码时先看 `buildResearchGraph()`：这里就是 Graph 的节点和边。再顺着
+`graphRouteXhsMode()`、`graphCollectServiceContent()`、`graphSearchXhs()`、`graphReadXhsDetails()` 这些方法往下看，
+就能知道每个节点实际做了什么。
+
+如果你想对照真实运行过程，打开 `TripResearchService.buildResearchGraph()`，按下面顺序看：
+
+```text
+addNode(...)              注册节点
+addConditionalEdges(...)  注册小红书 service/tool/both 条件边
+addEdge(...)              注册固定阶段顺序
+compile()                 编译并校验 Graph
+```
+
+小红书 `service/tool/both` 已经用 `addConditionalEdges(...)` 表达：
+
+- `service` 只走小红书 service 采集，成功后直接进入小红书 ready 校验。
+- `tool` 跳过 service，直接进入小红书搜索 Agent 和详情 Agent。
+- `both` 先走 service，再走 Agent tool，最后要求两边都拿到真实小红书内容。
+
+这样你看 `buildResearchGraph()` 就能知道当前模式会跑哪些节点，不需要再去每个节点里找“是否跳过”的判断。
 
 Prompt：
 
@@ -265,8 +291,40 @@ TravelResearchResult
   优点：看起来最自由
   缺点：无法保证先搜小红书、再查 POI、再查天气和酒店，前端进度也不真实
 
-Java 工作流 + 分阶段 Agent
+StateGraph + 分阶段 Agent
   优点：阶段顺序确定，工具调用仍由 Agent 自主决定参数，前端进度对应真实执行
+  适合学习：能看到 Spring AI Alibaba Graph 的节点、边、编译和执行
+```
+
+## 4.1 Agent Trace 文件怎么用
+
+每次 ReactAgent 调用都会由 `AiPromptTraceService` 写一个 Markdown 文件：
+
+```text
+logs/ai-trace/yyyy-MM-dd/{time}_{threadId}_{agent}.md
+```
+
+文件里会包含：
+
+```text
+System Prompt
+User Prompt
+Model Output
+tools
+elapsedMs
+```
+
+排查 Agent 问题时，建议先看对应 `threadId`：
+
+- 小红书搜索没有笔记：看 `*-xhs-search_*` 文件，确认关键词和模型输出。
+- 小红书详情没有正文：看 `*-xhs-detail_*` 文件，确认 note_id / xsec_token 是否传入。
+- 高德 POI、天气、酒店失败：看 `*-amap-poi_*`、`*-amap-weather_*`、`*-amap-hotel_*` 文件，确认工具返回和 `realData` 判断。
+- 结构化输出解析失败：看 `Model Output` 是否严格是 JSON，字段是否符合 `{{format}}`。
+
+这个 trace 是学习和排查用的，不参与业务逻辑。生产环境如果担心记录用户输入，可以设置：
+
+```bash
+AI_TRACE_ENABLED=false
 ```
 
 ## 5. 高德 Tool 怎么实现

@@ -12,7 +12,7 @@ spring:
   ai:
     dashscope:
       enabled: ${AI_DASHSCOPE_ENABLED:true}
-      api-key: ${AI_DASHSCOPE_API_KEY:sk-ws-H.RXIEDIM.sbNt.MEQCIHM4Yd-RpzdTYCvoX7O6irqYhoVEA5Hd0_AV4SgbyrreAiBnf_aSJTfO5HmKfAe-L-ExdtHgAz_LFYamocyR1yTzJA}
+      api-key: ${AI_DASHSCOPE_API_KEY:}
       chat:
         options:
           model: ${AI_DASHSCOPE_CHAT_MODEL:qwen-plus}
@@ -26,10 +26,16 @@ logging:
     path: ./logs
 
 tripstar:
+  ai:
+    trace:
+      # 本地学习和排查 Agent 时建议开启；生产环境如担心日志包含用户输入，可设置 AI_TRACE_ENABLED=false。
+      enabled: ${AI_TRACE_ENABLED:true}
+      # 每次 Agent 调用会写入一个 Markdown 文件，包含系统提示词、用户提示词和模型原始输出。
+      dir: ${AI_TRACE_DIR:./logs/ai-trace}
   map:
     amap:
       enabled: ${AMAP_ENABLED:true}
-      key: ${AMAP_KEY:61efbe8221fcd2ecea8e83963e463597}
+      key: ${AMAP_KEY:}
       base-url: ${AMAP_BASE_URL:https://restapi.amap.com}
   content:
     xhs:

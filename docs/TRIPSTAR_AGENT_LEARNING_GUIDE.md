@@ -33,6 +33,7 @@ Vue 前端
 - `modules/trip/src/main/java/com/zkry/trip/service/TripAiPlannerService.java`
 - `modules/trip/src/main/java/com/zkry/trip/service/TripPlanResponseFactory.java`
 - `modules/ai/src/main/java/com/zkry/ai/service/AiAgentService.java`
+- `modules/ai/src/main/java/com/zkry/ai/service/AiPromptTraceService.java`
 - `modules/ai/src/main/java/com/zkry/ai/service/AiTextService.java`
 - `modules/ai/src/main/java/com/zkry/ai/service/PromptResourceService.java`
 - `modules/content/src/main/java/com/zkry/content/service/XhsContentService.java`
@@ -45,32 +46,45 @@ Vue 前端
 - `modules/map/src/main/java/com/zkry/map/service/AmapHotelTools.java`
 - `modules/map/src/main/java/com/zkry/map/service/AmapMapContextService.java`
 
-## 2. 为什么用 Java 工作流控制多 Agent
+## 2. 为什么用 Graph 控制多 Agent
 
 旅游规划适合多智能体，但不适合让一个大 Agent 一次性拿全部工具。原因是：
 
 - 前端进度必须对应真实阶段，不能靠 `pause()` 模拟。
-- 小红书、POI、天气、酒店有天然顺序，顺序应该由 Java 工作流保证。
+- 小红书、POI、天气、酒店有天然顺序，顺序应该由 Graph 工作流保证。
 - 每个 Agent 只拿当前阶段工具白名单，才方便学习和排查。
 - 阶段内部仍由 Agent 自主决定关键词、参数和内容取舍。
 
-当前 `TripTaskService` 扮演“工作流调度器”：
+当前 `TripTaskService` 负责异步任务和 WebSocket 推送，真正的资料研究顺序由
+`TripResearchService` 里的 Spring AI Alibaba `StateGraph` 编排：
 
 ```text
-initializing
-  -> travel_research
-  -> xhs_search
-  -> xhs_detail
-  -> amap_poi_search
-  -> weather_search
-  -> hotel_search
-  -> research_merge
-  -> planning
-  -> graph_building
-  -> completed
+StateGraph
+  START
+    -> xhs_mode_route
+       service -> xhs_service_optional
+       tool    -> xhs_search_agent -> xhs_detail_agent
+       both    -> xhs_service_optional -> xhs_search_agent -> xhs_detail_agent
+    -> xhs_ready_check
+    -> amap_poi_agent
+    -> amap_weather_agent
+    -> amap_hotel_agent
+    -> merge_research_context
+  END
 ```
 
-`TripTaskService` 只负责总状态；真正的资料研究顺序在 `TripResearchService`。如果没有配置小红书 Cookie、高德 Web Service Key 或 AI Key，任务会明确失败并提示去 Vue 设置页补配置；配置齐全后，会把小红书游记、高德 POI、酒店、餐饮和天气合并成上下文交给 Planner。
+`TripResearchService` 仍然是你阅读资料研究源码的入口。先看 `research()`，再看 `buildResearchGraph()`，
+然后按节点方法逐个读。Graph 负责“谁先谁后”，ReactAgent 负责“当前阶段怎么调用工具”。
+
+小红书 `service/tool/both` 现在由 Graph 条件边控制：
+
+- `service`：只执行 Java service 小红书采集。
+- `tool`：只执行小红书搜索 Agent 和详情 Agent。
+- `both`：先执行 Java service，再执行小红书 Agent tool，两条链路都成功后才继续。
+
+这样做的好处是路线写在 `buildResearchGraph()` 里，节点内部不再靠 `if` 偷偷跳过，学习 Graph 时更直观。
+
+如果没有配置小红书 Cookie、高德 Web Service Key 或 AI Key，任务会明确失败并提示去 Vue 设置页补配置；配置齐全后，会把小红书游记、高德 POI、酒店、餐饮和天气合并成上下文交给 Planner。
 
 小红书阶段是硬前置。`xhs_search` 没有拿到可读取的笔记，或 `xhs_detail` 没有拿到真实游记正文时，`TripResearchService` 会立即抛出业务异常，任务不会继续进入 `amap_poi_search`、`weather_search`、`hotel_search`。这样前端进度和真实执行保持一致，也方便定位 Cookie、签名、接口字段变化等问题。
 
@@ -87,9 +101,12 @@ AiTextService
 
 AiAgentService
   -> 使用 Spring AI Alibaba ReactAgent 调用模型
+
+AiPromptTraceService
+  -> 把每次 Agent 调用的系统提示词、用户提示词和模型原始输出写到 logs/ai-trace
 ```
 
-当前主流程已经不是单纯 `ChatClient` 调用，而是第一版受控 ReactAgent 工作流：
+当前主流程已经不是单纯 `ChatClient` 调用，而是 Graph 编排下的受控 ReactAgent 工作流：
 
 ```text
 TripResearchService
@@ -113,6 +130,7 @@ ChatController
 - 由 `AiAgentService` 统一创建和调用 `ReactAgent`。
 - 由 `AiTextService` 统一创建运行时 `ChatModel`。
 - Prompt 统一放在资源目录，不硬编码在 Java 方法中。
+- Agent 调用明细写入 `logs/ai-trace/yyyy-MM-dd/*.md`，方便按 `threadId` 复盘。
 - 没有配置模型时返回 `Optional.empty()`，上层会返回明确业务错误。
 - 模型调用失败时记录日志并失败，不再回退到模拟数据。
 
@@ -122,6 +140,19 @@ ChatController
 - 小红书详情阶段没有 `content_context` 或 `realData=false`，立即停在 `xhs_detail`。
 - 高德 POI、天气、酒店任一阶段没有 `map_context` 或 `realData=false`，立即停在对应阶段。
 - Tool 返回 `success=false` 是给 Agent 看的错误观察，不是最终成功结果；阶段校验会决定是否终止。
+
+排查提示词和输出时，优先看 AI Trace 文件：
+
+```text
+logs/ai-trace/yyyy-MM-dd/{time}_{threadId}_{agent}.md
+```
+
+例如酒店餐饮阶段失败时，看 `amap-hotel-research-agent` 对应文件，可以直接确认：
+
+- 系统提示词是否要求过严；
+- 用户提示词里的住宿、偏好、备注是否正确；
+- 工具是否返回酒店或餐饮 POI；
+- 模型最终是否把 `map_context.realData` 写错。
 
 当前默认配置仍可从 `application.yml`/环境变量初始化，但运行时以 Vue 设置页保存到 `/api/settings` 的值为准：
 
