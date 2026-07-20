@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 public class AiAgentService {
 
     private static final Logger log = LoggerFactory.getLogger(AiAgentService.class);
+    private static final String AGENT_EXCEPTION_PREFIX = "Exception: ";
 
     private final AiTextService aiTextService;
     private final AiPromptTraceService promptTraceService;
@@ -80,6 +81,8 @@ public class AiAgentService {
             return Optional.empty();
         }
         long startedAt = System.currentTimeMillis();
+        String safeThreadId = threadId == null || threadId.isBlank() ? agentName : threadId;
+        String content = "";
         try {
             ReactAgent agent = ReactAgent.builder()
                 .name(agentName)
@@ -88,7 +91,6 @@ public class AiAgentService {
                 .enableLogging(true)
                 .methodTools(methodTools == null ? new Object[0] : methodTools)
                 .build();
-            String safeThreadId = threadId == null || threadId.isBlank() ? agentName : threadId;
             RunnableConfig config = RunnableConfig.builder()
                 .threadId(safeThreadId)
                 .build();
@@ -100,21 +102,14 @@ public class AiAgentService {
                 methodTools == null ? 0 : methodTools.length,
                 toolNames(methodTools));
             AssistantMessage message = agent.call(userPrompt, config);
-            String content = message == null ? "" : message.getText();
+            content = message == null ? "" : message.getText();
             if (content == null || content.isBlank()) {
-                promptTraceService.writeFailure(
-                    agentName,
-                    safeThreadId,
-                    instruction,
-                    userPrompt,
-                    toolNames(methodTools),
-                    content,
-                    "ReactAgent 返回空内容",
-                    System.currentTimeMillis() - startedAt
-                );
-                log.warn("[AI-AGENT] ReactAgent 返回空内容 agent={} threadId={} elapsedMs={}",
-                    agentName, safeThreadId, System.currentTimeMillis() - startedAt);
-                return Optional.empty();
+                throw new IllegalStateException("ReactAgent 返回空内容");
+            }
+            // 当前 Agent Framework 会把模型调用异常包装成“Exception: ...”文本返回。
+            // 这种文本不是模型答案，必须立即按失败抛出，不能继续交给结构化输出解析器。
+            if (content.startsWith(AGENT_EXCEPTION_PREFIX)) {
+                throw new IllegalStateException(content.substring(AGENT_EXCEPTION_PREFIX.length()).trim());
             }
             promptTraceService.writeSuccess(
                 agentName,
@@ -131,21 +126,21 @@ public class AiAgentService {
         } catch (Exception ex) {
             promptTraceService.writeFailure(
                 agentName,
-                threadId == null || threadId.isBlank() ? agentName : threadId,
+                safeThreadId,
                 instruction,
                 userPrompt,
                 toolNames(methodTools),
-                "",
+                content,
                 ex.getMessage(),
                 System.currentTimeMillis() - startedAt
             );
             log.warn("[AI-AGENT] ReactAgent 调用失败 agent={} threadId={} elapsedMs={} reason={}",
                 agentName,
-                threadId == null || threadId.isBlank() ? agentName : threadId,
+                safeThreadId,
                 System.currentTimeMillis() - startedAt,
                 ex.getMessage(),
                 ex);
-            return Optional.empty();
+            throw new IllegalStateException("ReactAgent 调用失败：" + ex.getMessage(), ex);
         }
     }
 

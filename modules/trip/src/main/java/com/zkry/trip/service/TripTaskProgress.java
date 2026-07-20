@@ -15,6 +15,12 @@ public final class TripTaskProgress {
     public static final int XHS_SERVICE_SEARCH = 20;
     public static final int XHS_SEARCH = 22;
     public static final int XHS_DETAIL = 26;
+
+    // 指定笔记模式在 30% 前完成链接解析、图片下载和多模态理解，之后复用地图阶段进度。
+    public static final int XHS_NOTE_RESOLVE = 18;
+    public static final int XHS_NOTE_IMAGE = 23;
+    public static final int XHS_NOTE_UNDERSTANDING = 28;
+
     public static final int AMAP_POI_SEARCH = 30;
     public static final int WEATHER_SEARCH = 46;
     public static final int HOTEL_SEARCH = 64;

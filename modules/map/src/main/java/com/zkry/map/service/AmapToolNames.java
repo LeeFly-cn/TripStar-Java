@@ -12,6 +12,7 @@ public final class AmapToolNames {
     public static final String POI_SEARCH = "amap_poi_search";
     public static final String HOTEL_SEARCH = "amap_hotel_search";
     public static final String RESTAURANT_SEARCH = "amap_restaurant_search";
+    public static final String RESTAURANT_BATCH_SEARCH = "amap_restaurant_batch_search";
     public static final String WEATHER = "amap_weather";
 
     private AmapToolNames() {

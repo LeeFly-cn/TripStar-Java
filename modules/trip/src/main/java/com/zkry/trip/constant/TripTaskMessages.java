@@ -13,6 +13,16 @@ public final class TripTaskMessages {
     public static final String TRAVEL_RESEARCH = "正在启动分阶段资料研究工作流...";
     public static final String XHS_SEARCH = "正在调用小红书搜索智能体，检索真实游记笔记...";
     public static final String XHS_DETAIL = "正在调用小红书详情智能体，读取笔记正文并提炼景点...";
+
+    // 指定笔记模式专用文案：阶段值与自主规划共用，显示文字可以更准确描述当前工作。
+    public static final String XHS_NOTE_SUBMITTED = "指定笔记规划任务已提交，正在初始化...";
+    public static final String XHS_NOTE_INITIALIZING = "正在初始化小红书指定笔记规划流程...";
+    public static final String XHS_NOTE_RESOLVE = "正在解析小红书分享内容和短链接...";
+    public static final String XHS_NOTE_IMAGE = "正在读取笔记正文并下载全部图片...";
+    public static final String XHS_NOTE_UNDERSTANDING = "正在使用多模态模型识别目的地、天数、路线和笔记图片...";
+    public static final String XHS_NOTE_POI_VALIDATE = "正在通过高德 Service 校验并补全笔记地点...";
+    public static final String XHS_NOTE_HOTEL_FOOD = "正在根据每日路线补充缺失的酒店和餐饮...";
+
     public static final String AMAP_POI_SEARCH = "正在调用高德 POI 智能体，查询景点和经纬度...";
     public static final String WEATHER_SEARCH = "正在调用高德天气智能体，查询天气预报...";
     public static final String HOTEL_SEARCH = "正在调用高德酒店智能体，搜索酒店和餐饮...";

@@ -273,14 +273,23 @@ TripstarAgent.AMAP_HOTEL_RESEARCH
 结构化返回：
 
 ```text
-TravelResearchResult
-  -> map_context
+XhsSearchResearchResult
+  -> cities / user_constraints / excluded_places / tool_calls / summary
+
+XhsDetailResearchResult
   -> content_context
-  -> user_constraints
-  -> excluded_places
-  -> tool_calls
-  -> summary
+  -> excluded_places / tool_calls / summary
+
+MapAgentResult
+  -> map_context
+  -> tool_calls / summary
+
+TravelResearchResult
+  -> 只在 Graph 最终合并时生成
+  -> 汇总 map_context / content_context / 用户约束 / 排除地点 / 工具记录 / 摘要
 ```
+
+每个阶段 Agent 只返回自己负责的数据。这样 Structured Output 的格式更短，模型不需要填写大量无关空字段，Java 代码也能直接看出阶段职责。
 
 这里的重点是：Agent 不是直接生成最终行程，而是先理解用户需求并调用工具收集真实上下文。
 
@@ -581,11 +590,16 @@ Optional<TripPlan> plan = structuredOutputService.callForObject(
 现在主要结构化输出：
 
 ```text
+XhsSearchResearchResult
+XhsDetailResearchResult
+MapAgentResult
 TravelResearchResult
 TripPlan
 ReviewResult
 List<ContentAttractionCandidate>
 ```
+
+其中 `TravelResearchResult` 不是某个 Agent 的输出，而是 `TripResearchService` 在 Graph 合并节点构造的最终研究汇总对象。
 
 当前主线只有 Structured Output：模型输出不能被 `BeanOutputConverter` 转成 DTO 时，本次任务会明确失败并打印结构化解析日志。旧的手写 JSON 提取/修复路线已经删除。
 
@@ -594,29 +608,35 @@ List<ContentAttractionCandidate>
 规划入口：
 
 ```text
-TripAiPlannerService.plan()
+自主规划：TripAiPlannerService.plan()
+指定笔记：TripAiPlannerService.planFromXhsNotes()
 ```
 
 流程：
 
 ```text
-1. 读取 planner-system.md / planner-user.md
-2. TripPlannerPrompts.plannerVariables() 组装用户需求、地图上下文、小红书上下文
+1. 读取共用的 planner-system.md，并按模式选择用户 Prompt
+2. 自主规划使用 plannerVariables()，指定笔记使用 xhsNotePlannerVariables()
 3. 加入 Structured Output format
 4. 调用 TripPlannerAgent
 5. BeanOutputConverter 解析成 TripPlan
 6. normalize() 补齐必要字段
-7. TripReviewAgent 检查结构和可执行性
-8. 生成 TripPlanResponse
+7. 指定笔记模式校验高德景点是否全部进入 TripPlan
+8. TripReviewAgent 按模式检查结构和可执行性
+9. 生成 TripPlanResponse
 ```
+
+自主规划的 `planner-user.md` 保留“每天 2-3 个景点”，让 Agent 从候选中推荐。指定笔记的 `planner-xhs-note-user.md` 不限制每天数量，必须按照笔记 `day_routes` 保留全部已校准景点，不能把用户提供的攻略重新筛成少量推荐。
 
 Prompt：
 
 ```text
 planner-system.md
 planner-user.md
+planner-xhs-note-user.md
 review-system.md
 review-user.md
+review-xhs-note-user.md
 ```
 
 Agent 常量：
@@ -852,6 +872,27 @@ frontend/src/views/Result.vue
 所以它是真实最终行程的结构化展示，不是独立的数据采集结果。
 
 换句话说：图谱的数据真实来自本次 LLM 生成的 `TripPlan`，但“图谱关系”是后端按展示规则派生出来的，不是从高德/小红书直接返回的一张图。
+
+### 结果页景点图片为什么不放进 Planner Agent
+
+景点图片属于展示增强，不参与路线规划。让 Planner 再调用图片工具会增加 Agent 轮次和失败面，
+所以两种模式采用不同但确定性的图片链路：
+
+```text
+自主规划
+  -> Result.vue
+  -> GET /api/poi/photo
+  -> 小红书搜索与详情（保持原逻辑，需要 Cookie）
+
+指定笔记规划
+  -> XhsNotePoiEnrichmentService 的高德 POI Service 补全结果
+  -> XhsNotePlanPhotoEnricher 先把已有 photoUrl 写入 TripPlan.image_url
+  -> Result.vue 只对剩余缺图景点调用 GET /api/poi/photo/amap
+  -> AmapPoiPhotoService（缓存 + 全局并发限制）
+```
+
+指定笔记模式不会调用原小红书景点图片接口，因此不需要为了结果页图片配置 Cookie。
+前端补查并发为 3，后端还通过 `Semaphore` 限制所有用户合计并发；相同城市和景点会命中内存缓存。
 
 ## 14. 二开入口
 

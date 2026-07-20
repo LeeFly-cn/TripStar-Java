@@ -5,17 +5,22 @@ import com.alibaba.cloud.ai.dashscope.chat.DashScopeChatModel;
 import com.alibaba.cloud.ai.dashscope.chat.DashScopeChatOptions;
 import com.zkry.common.core.config.TripstarRuntimeSettingsService;
 import com.zkry.common.core.config.TripstarSettingKeys;
+import java.time.Duration;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClient;
 
 @Service
 public class AiTextService {
 
     private static final Logger log = LoggerFactory.getLogger(AiTextService.class);
+    private static final Duration DASHSCOPE_CONNECT_TIMEOUT = Duration.ofSeconds(60);
+    private static final Duration DASHSCOPE_READ_TIMEOUT = Duration.ofMinutes(5);
 
     private final TripstarRuntimeSettingsService runtimeSettingsService;
 
@@ -74,12 +79,25 @@ public class AiTextService {
         String model = runtimeSettingsService.stringValue(TripstarSettingKeys.OPENAI_MODEL).orElse("qwen-plus");
         String baseUrl = runtimeSettingsService.stringValue(TripstarSettingKeys.OPENAI_BASE_URL).orElse("");
         try {
-            DashScopeApi.Builder apiBuilder = DashScopeApi.builder().apiKey(apiKey.get());
+            // Spring AI Alibaba 2.0.0-M1.1 默认只等待模型响应 180 秒。
+            // 多轮工具调用结束后的总结可能超过这个时间，因此在创建 DashScopeApi 时明确设置为 5 分钟。
+            SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+            requestFactory.setConnectTimeout(DASHSCOPE_CONNECT_TIMEOUT);
+            requestFactory.setReadTimeout(DASHSCOPE_READ_TIMEOUT);
+
+            DashScopeApi.Builder apiBuilder = DashScopeApi.builder()
+                .apiKey(apiKey.get())
+                .restClientBuilder(RestClient.builder().requestFactory(requestFactory));
             if (!baseUrl.isBlank()) {
                 apiBuilder.baseUrl(baseUrl);
             }
             DashScopeChatOptions options = DashScopeChatOptions.builder()
                 .model(model)
+                // TripStar 只维护一套模型配置，并且指定笔记模式必须识别图片。
+                // 因此这里统一使用 DashScope multimodal-generation 端点。
+                // 即使某次 Agent 只发送文本，qwen3.7-plus 这类多模态模型也必须走该端点，
+                // 否则 DashScope 会因为“模型名称与 API 端点不匹配”返回 url error。
+                .multiModel(true)
                 .build();
             return Optional.of(DashScopeChatModel.builder()
                 .dashScopeApi(apiBuilder.build())

@@ -23,6 +23,7 @@ import com.zkry.content.dto.ContentPlanningContext;
 import com.zkry.content.service.TravelContentService;
 import com.zkry.content.service.XhsDetailTools;
 import com.zkry.content.service.XhsSearchTools;
+import com.zkry.map.dto.MapAgentResult;
 import com.zkry.map.dto.MapCityContext;
 import com.zkry.map.dto.MapPlanningContext;
 import com.zkry.map.dto.MapPoi;
@@ -35,6 +36,7 @@ import com.zkry.trip.constant.TripTaskMessages;
 import com.zkry.trip.constant.TravelResearchMessages;
 import com.zkry.trip.dto.TravelResearchResult;
 import com.zkry.trip.dto.TripRequest;
+import com.zkry.trip.dto.XhsDetailResearchResult;
 import com.zkry.trip.dto.XhsSearchResearchResult;
 import com.zkry.trip.prompt.TripPlannerPrompts;
 import java.util.ArrayList;
@@ -642,18 +644,13 @@ public class TripResearchService {
         run.reporter.report(TripTaskStage.PLANNING, TripTaskProgress.RESEARCH_MERGE, TripTaskMessages.RESEARCH_MERGE);
         ContentPlanningContext mergedContent = mergeContent(run.serviceContent, run.toolContent, run.mode);
         MapPlanningContext mergedMap = mergeMapContexts(run.request, run.poiContext, run.weatherContext, run.hotelContext);
-        List<TravelResearchResult> stageResults = new ArrayList<>();
-        if (run.xhsToolResult != null) {
-            stageResults.add(run.xhsToolResult);
-        }
-        stageResults.add(run.poiResult);
-        stageResults.add(run.weatherResult);
-        stageResults.add(run.hotelResult);
+        List<MapAgentResult> mapStageResults = List.of(run.poiResult, run.weatherResult, run.hotelResult);
         TravelResearchResult mergedResult = mergeResearchResult(
             mergedMap,
             mergedContent,
             run.xhsSearchResult,
-            stageResults
+            run.xhsToolResult,
+            mapStageResults
         );
         run.researchContext = new ResearchContext(mergedMap, mergedContent, mergedResult);
         return graphStep(NODE_MERGE);
@@ -733,21 +730,21 @@ public class TripResearchService {
         );
     }
 
-    private Optional<TravelResearchResult> collectXhsDetailsByAgent(
+    private Optional<XhsDetailResearchResult> collectXhsDetailsByAgent(
         String taskId,
         TripRequest request,
         XhsSearchResearchResult searchResult
     ) {
         /*
          * 搜索结果会原样放进详情 Agent 的 Prompt。
-         * 详情 Agent 根据 note_id / xsec_token 调 xhs_note_detail，最后输出 TravelResearchResult。
+         * 详情 Agent 根据 note_id / xsec_token 调 xhs_note_detail，最后只输出小红书详情阶段需要的字段。
          *
          * 这里故意把“搜索”和“详情”拆成两个 Agent：
          * 搜索 Agent 负责找候选，详情 Agent 负责读正文。这样日志能看清楚到底是哪一步失败。
          */
         Map<String, String> variables = new LinkedHashMap<>(TripPlannerPrompts.requestVariables(request));
         variables.put(TripstarPromptVariable.XHS_SEARCH_RESULTS, JsonUtils.toJsonString(searchResult));
-        variables.put(TripstarPromptVariable.FORMAT, structuredOutputService.format(TravelResearchResult.class));
+        variables.put(TripstarPromptVariable.FORMAT, structuredOutputService.format(XhsDetailResearchResult.class));
         String userPrompt = promptResourceService.render(TripstarPrompt.RESEARCH_XHS_DETAIL_USER, variables);
         log.info("[Research] 调用 XhsDetailAgent taskId={} agent={} searchCities={} tools={}",
             taskId,
@@ -756,7 +753,7 @@ public class TripResearchService {
             xhsDetailTools.getClass().getSimpleName());
         return structuredOutputService.callForObject(
             TripstarAgent.XHS_DETAIL,
-            TravelResearchResult.class,
+            XhsDetailResearchResult.class,
             promptResourceService.load(TripstarPrompt.RESEARCH_XHS_DETAIL_SYSTEM),
             userPrompt,
             taskId + "-xhs-detail",
@@ -833,7 +830,7 @@ public class TripResearchService {
         throw new BizException("小红书内容采集失败：" + reason);
     }
 
-    private Optional<TravelResearchResult> collectMapByAgent(
+    private Optional<MapAgentResult> collectMapByAgent(
         String taskId,
         TripRequest request,
         TripstarAgent agent,
@@ -858,7 +855,7 @@ public class TripResearchService {
         );
     }
 
-    private Optional<TravelResearchResult> collectMapByAgent(
+    private Optional<MapAgentResult> collectMapByAgent(
         String taskId,
         TripRequest request,
         TripstarAgent agent,
@@ -873,17 +870,17 @@ public class TripResearchService {
             variables.putAll(extraVariables);
         }
         /*
-         * FORMAT 让模型按 TravelResearchResult 返回。
+         * FORMAT 让模型按 MapAgentResult 返回。
          * 这就是之前我们说的 Structured Output：模型不是随便写一段文本，
          * 而是按 Java record 的字段输出 JSON，再由 Spring AI 帮我们转成对象。
          */
-        variables.put(TripstarPromptVariable.FORMAT, structuredOutputService.format(TravelResearchResult.class));
+        variables.put(TripstarPromptVariable.FORMAT, structuredOutputService.format(MapAgentResult.class));
         String userPrompt = promptResourceService.render(userPromptPath, variables);
         log.info("[Research] 调用地图阶段 Agent taskId={} agent={} tools={}",
             taskId, agent.id(), tools == null ? "[]" : tools.getClass().getSimpleName());
-        Optional<TravelResearchResult> result = structuredOutputService.callForObject(
+        Optional<MapAgentResult> result = structuredOutputService.callForObject(
             agent,
-            TravelResearchResult.class,
+            MapAgentResult.class,
             promptResourceService.load(systemPromptPath),
             userPrompt,
             taskId + "-" + threadSuffix,
@@ -945,10 +942,11 @@ public class TripResearchService {
         String taskId,
         String stage,
         String label,
-        TravelResearchResult result
+        XhsDetailResearchResult result
     ) {
         /*
-         * Agent 最终返回的是 TravelResearchResult。
+         * 详情 Agent 最终返回的是 XhsDetailResearchResult，只包含小红书正文上下文、
+         * 排除地点、工具调用记录和阶段摘要。
          *
          * 小红书详情阶段必须把真实笔记正文、图片、提炼出的景点候选放到
          * content_context 里。这里不再做“自动补救”，因为缺 content_context
@@ -968,9 +966,9 @@ public class TripResearchService {
         return contentContext;
     }
 
-    private MapPlanningContext ensureMapStageData(String taskId, String stage, String label, TravelResearchResult result) {
+    private MapPlanningContext ensureMapStageData(String taskId, String stage, String label, MapAgentResult result) {
         /*
-         * 高德三个节点都复用 TravelResearchResult：
+         * 高德三个节点统一返回 MapAgentResult：
          *
          * - POI Agent 返回 map_context.attractions / center；
          * - Weather Agent 返回 map_context.weatherForecasts；
@@ -1126,7 +1124,8 @@ public class TripResearchService {
         MapPlanningContext mapContext,
         ContentPlanningContext contentContext,
         XhsSearchResearchResult xhsSearchResult,
-        List<TravelResearchResult> stageResults
+        XhsDetailResearchResult xhsDetailResult,
+        List<MapAgentResult> mapStageResults
     ) {
         /*
          * 这个 TravelResearchResult 是“资料研究总结果”，不是某个单独 Agent 的原始返回。
@@ -1153,9 +1152,12 @@ public class TripResearchService {
             summaries.add(xhsSearchResult.safeSummary());
         }
 
-        for (TravelResearchResult result : stageResults) {
-            constraints.addAll(safeList(result.user_constraints()));
-            excludedPlaces.addAll(safeList(result.excluded_places()));
+        if (xhsDetailResult != null) {
+            excludedPlaces.addAll(xhsDetailResult.safeExcludedPlaces());
+            toolCalls.addAll(xhsDetailResult.safeToolCalls());
+            summaries.add(xhsDetailResult.safeSummary());
+        }
+        for (MapAgentResult result : mapStageResults) {
             toolCalls.addAll(result.safeToolCalls());
             summaries.add(result.safeSummary());
         }
@@ -1169,6 +1171,7 @@ public class TripResearchService {
         );
     }
 
+    /** 日志读取可空列表时统一转为空列表，避免日志表达式出现空指针。 */
     private List<String> safeList(List<String> values) {
         return values == null ? List.of() : values;
     }
@@ -1212,9 +1215,9 @@ public class TripResearchService {
         /*
          * 小红书详情 Agent 原始结构化结果。
          * 写入：graphReadXhsDetails
-         * 读取：graphMergeResearchContext，用来合并 tool_calls / summary / 用户约束。
+         * 读取：graphMergeResearchContext，用来合并 excluded_places / tool_calls / summary。
          */
-        private TravelResearchResult xhsToolResult;
+        private XhsDetailResearchResult xhsToolResult;
         /*
          * 从 xhsToolResult.content_context 拿出来的小红书正文上下文。
          * 写入：graphReadXhsDetails
@@ -1230,17 +1233,17 @@ public class TripResearchService {
          * 高德 POI Agent 原始结果和校验后的 map_context。
          * poiResult 保留 Agent 摘要和工具调用记录，poiContext 保留地图业务数据。
          */
-        private TravelResearchResult poiResult;
+        private MapAgentResult poiResult;
         private MapPlanningContext poiContext;
         /*
          * 高德天气 Agent 原始结果和校验后的 map_context。
          */
-        private TravelResearchResult weatherResult;
+        private MapAgentResult weatherResult;
         private MapPlanningContext weatherContext;
         /*
          * 高德酒店餐饮 Agent 原始结果和校验后的 map_context。
          */
-        private TravelResearchResult hotelResult;
+        private MapAgentResult hotelResult;
         private MapPlanningContext hotelContext;
         /*
          * Graph 最终产物。

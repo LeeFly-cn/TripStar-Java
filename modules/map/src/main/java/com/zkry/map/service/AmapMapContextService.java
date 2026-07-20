@@ -87,13 +87,32 @@ public class AmapMapContextService {
     }
 
     public List<MapPoi> searchPois(String city, String keywords, int limit) throws IOException, InterruptedException {
+        return searchPois(city, keywords, "", limit);
+    }
+
+    /**
+     * 按高德 POI 类型代码搜索。
+     *
+     * <p>酒店和餐饮属于明确的数据类别，必须在请求高德时限定类型，避免关键词相似的景区、
+     * 商场或夜市进入错误数组。普通景点校准仍调用不带类型的重载方法。
+     */
+    public List<MapPoi> searchPois(
+        String city,
+        String keywords,
+        String types,
+        int limit
+    ) throws IOException, InterruptedException {
         validateReady();
-        log.info("[AMap] POI 搜索 city={} keywords={} limit={}", city, keywords, limit);
+        log.info("[AMap] POI 搜索 city={} keywords={} types={} limit={}",
+            city, keywords, types == null || types.isBlank() ? "-" : types, limit);
         Map<String, String> params = new LinkedHashMap<>();
         params.put("keywords", keywords);
         params.put("region", city);
         params.put("city_limit", "true");
         params.put("page_size", String.valueOf(limit));
+        if (types != null && !types.isBlank()) {
+            params.put("types", types);
+        }
         params.put("show_fields", "business,photos");
         params.put("output", "JSON");
         JsonNode root = get("/v5/place/text", params);
@@ -122,7 +141,8 @@ public class AmapMapContextService {
                 firstPhoto(poi.path("photos"))
             ));
         }
-        log.info("[AMap] POI 搜索完成 city={} keywords={} resultCount={}", city, keywords, result.size());
+        log.info("[AMap] POI 搜索完成 city={} keywords={} types={} resultCount={}",
+            city, keywords, types == null || types.isBlank() ? "-" : types, result.size());
         return result;
     }
 

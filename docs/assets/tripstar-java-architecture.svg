@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f8fbff"/>
+      <stop offset="100%" stop-color="#eef7f4"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L12,7 L2,12 Z" fill="#2563eb"/>
+    </marker>
+    <style>
+      .title { font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif; font-size: 42px; font-weight: 800; fill: #0f172a; }
+      .subtitle { font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif; font-size: 20px; fill: #475569; }
+      .group-title { font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif; font-size: 22px; font-weight: 700; fill: #0f172a; }
+      .node-title { font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif; font-size: 22px; font-weight: 700; fill: #0f172a; }
+      .node-desc { font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif; font-size: 17px; fill: #475569; }
+      .node { fill: #ffffff; stroke: #dbeafe; stroke-width: 2; filter: url(#shadow); }
+      .node-green { fill: #ffffff; stroke: #bbf7d0; stroke-width: 2; filter: url(#shadow); }
+      .node-orange { fill: #ffffff; stroke: #fed7aa; stroke-width: 2; filter: url(#shadow); }
+      .group-blue { fill: #eff6ff; stroke: #bfdbfe; stroke-width: 2; }
+      .group-green { fill: #f0fdf4; stroke: #bbf7d0; stroke-width: 2; }
+      .line { fill: none; stroke: #2563eb; stroke-width: 3; marker-end: url(#arrow); }
+      .line-soft { fill: none; stroke: #38bdf8; stroke-width: 3; marker-end: url(#arrow); }
+      .loop { fill: none; stroke: #10b981; stroke-width: 3; stroke-dasharray: 8 8; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+
+  <text x="800" y="70" text-anchor="middle" class="title">TripStar Java 系统架构图</text>
+  <text x="800" y="108" text-anchor="middle" class="subtitle">Spring Boot + Spring AI Alibaba Graph + 多 Agent 工具协作</text>
+
+  <!-- Main input and backend chain -->
+  <rect x="80" y="205" width="210" height="105" rx="18" class="node"/>
+  <text x="185" y="246" text-anchor="middle" class="node-title">用户输入</text>
+  <text x="185" y="278" text-anchor="middle" class="node-desc">目的地 / 天数 / 要求</text>
+
+  <rect x="355" y="205" width="210" height="105" rx="18" class="node"/>
+  <text x="460" y="246" text-anchor="middle" class="node-title">Vue 前端</text>
+  <text x="460" y="278" text-anchor="middle" class="node-desc">表单提交 / 进度展示</text>
+
+  <rect x="630" y="205" width="230" height="105" rx="18" class="node"/>
+  <text x="745" y="246" text-anchor="middle" class="node-title">Spring Boot 后端</text>
+  <text x="745" y="278" text-anchor="middle" class="node-desc">API / 任务调度</text>
+
+  <rect x="925" y="205" width="300" height="105" rx="18" class="node-green"/>
+  <text x="1075" y="243" text-anchor="middle" class="node-title">Spring AI Alibaba Graph</text>
+  <text x="1075" y="276" text-anchor="middle" class="node-desc">多 Agent 工作流编排</text>
+
+  <path d="M290 257 L355 257" class="line"/>
+  <path d="M565 257 L630 257" class="line"/>
+  <path d="M860 257 L925 257" class="line"/>
+
+  <!-- Tool agent layer -->
+  <rect x="170" y="395" width="1260" height="205" rx="28" class="group-blue"/>
+  <text x="800" y="430" text-anchor="middle" class="group-title">工具 Agent 层</text>
+
+  <rect x="225" y="465" width="240" height="92" rx="16" class="node"/>
+  <text x="345" y="500" text-anchor="middle" class="node-title">小红书 Agent</text>
+  <text x="345" y="530" text-anchor="middle" class="node-desc">真实游记内容</text>
+
+  <rect x="505" y="465" width="240" height="92" rx="16" class="node"/>
+  <text x="625" y="500" text-anchor="middle" class="node-title">高德 POI Agent</text>
+  <text x="625" y="530" text-anchor="middle" class="node-desc">景点与坐标</text>
+
+  <rect x="785" y="465" width="220" height="92" rx="16" class="node"/>
+  <text x="895" y="500" text-anchor="middle" class="node-title">高德天气 Agent</text>
+  <text x="895" y="530" text-anchor="middle" class="node-desc">城市天气查询</text>
+
+  <rect x="1045" y="465" width="320" height="92" rx="16" class="node"/>
+  <text x="1205" y="500" text-anchor="middle" class="node-title">高德酒店餐饮 Agent</text>
+  <text x="1205" y="530" text-anchor="middle" class="node-desc">酒店 / 餐饮安排</text>
+
+  <path d="M1075 310 C1075 360, 345 360, 345 465" class="line-soft"/>
+  <path d="M1075 310 C1075 360, 625 360, 625 465" class="line-soft"/>
+  <path d="M1075 310 C1075 360, 895 360, 895 465" class="line-soft"/>
+  <path d="M1075 310 C1075 360, 1205 360, 1205 465" class="line-soft"/>
+
+  <!-- Merge -->
+  <rect x="635" y="665" width="330" height="98" rx="18" class="node-orange"/>
+  <text x="800" y="704" text-anchor="middle" class="node-title">资料上下文合并</text>
+  <text x="800" y="735" text-anchor="middle" class="node-desc">小红书 + 高德真实数据</text>
+
+  <path d="M345 557 C345 625, 705 625, 705 665" class="line"/>
+  <path d="M625 557 C625 620, 755 620, 755 665" class="line"/>
+  <path d="M895 557 C895 620, 845 620, 845 665" class="line"/>
+  <path d="M1205 557 C1205 625, 895 625, 895 665" class="line"/>
+
+  <!-- Planning layer -->
+  <rect x="1035" y="635" width="420" height="160" rx="28" class="group-green"/>
+  <text x="1245" y="670" text-anchor="middle" class="group-title">规划 Agent 层</text>
+
+  <rect x="1075" y="700" width="160" height="70" rx="14" class="node-green"/>
+  <text x="1155" y="730" text-anchor="middle" class="node-title">Planner</text>
+  <text x="1155" y="755" text-anchor="middle" class="node-desc">生成计划</text>
+
+  <rect x="1260" y="700" width="160" height="70" rx="14" class="node-green"/>
+  <text x="1340" y="730" text-anchor="middle" class="node-title">Review</text>
+  <text x="1340" y="755" text-anchor="middle" class="node-desc">质量检查</text>
+
+  <path d="M965 714 L1075 735" class="line"/>
+  <path d="M1235 735 L1260 735" class="line"/>
+
+  <!-- Output -->
+  <rect x="570" y="810" width="460" height="65" rx="16" class="node"/>
+  <text x="800" y="838" text-anchor="middle" class="node-title">结构化输出</text>
+  <text x="800" y="862" text-anchor="middle" class="node-desc">每日路线 / 三餐 / 酒店 / 建议</text>
+
+  <path d="M1340 770 C1340 842, 1030 842, 1030 842" class="line"/>
+  <path d="M570 842 C410 842, 460 330, 460 310" class="loop"/>
+</svg>

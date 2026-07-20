@@ -35,4 +35,5 @@ public class AmapHotelTools {
     ) {
         return delegate.restaurantSearch(city, keywords, limit);
     }
+
 }

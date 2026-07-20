@@ -1,6 +1,7 @@
 HELP.md
 target/
 logs/
+temp/
 *.log
 .env
 .env.local

@@ -23,6 +23,8 @@ import java.util.stream.Collectors;
  */
 public final class TripPlannerPrompts {
 
+    private static final int MAX_CANDIDATE_POIS = 5;
+
     private TripPlannerPrompts() {
     }
 
@@ -34,9 +36,32 @@ public final class TripPlannerPrompts {
         MapPlanningContext mapContext,
         ContentPlanningContext contentContext
     ) {
+        return plannerVariables(request, mapContext, contentContext, false);
+    }
+
+    /**
+     * 指定笔记模式使用的 Planner 变量。
+     *
+     * <p>笔记中的景点是用户明确提供的行程事实，不是高德额外推荐的候选项，
+     * 因此必须把对应的全部 POI 交给 Planner，不能只保留前几条。
+     */
+    public static Map<String, String> xhsNotePlannerVariables(
+        TripRequest request,
+        MapPlanningContext mapContext,
+        ContentPlanningContext contentContext
+    ) {
+        return plannerVariables(request, mapContext, contentContext, true);
+    }
+
+    private static Map<String, String> plannerVariables(
+        TripRequest request,
+        MapPlanningContext mapContext,
+        ContentPlanningContext contentContext,
+        boolean includeAllAttractions
+    ) {
         Map<String, String> variables = new LinkedHashMap<>(requestVariables(request));
-        variables.put("map_context", mapContextBlock(mapContext));
-        variables.put("content_context", contentContextBlock(contentContext));
+        variables.put("map_context", mapContextBlock(mapContext, includeAllAttractions));
+        variables.put("content_context", contentContextBlock(contentContext, includeAllAttractions));
         return variables;
     }
 
@@ -70,17 +95,20 @@ public final class TripPlannerPrompts {
         );
     }
 
-    private static String mapContextBlock(MapPlanningContext context) {
+    private static String mapContextBlock(MapPlanningContext context, boolean includeAllAttractions) {
         if (context == null || !context.realData() || context.safeCities().isEmpty()) {
             String message = context == null ? "没有地图上下文。" : context.message();
             return "- 数据源：" + safe(context == null ? "" : context.source()) + "\n- 状态：" + safe(message);
         }
         return context.safeCities().stream()
-            .map(TripPlannerPrompts::cityContextBlock)
+            .map(city -> cityContextBlock(city, includeAllAttractions))
             .collect(Collectors.joining("\n\n"));
     }
 
-    private static String cityContextBlock(MapCityContext context) {
+    private static String cityContextBlock(MapCityContext context, boolean includeAllAttractions) {
+        String attractions = includeAllAttractions
+            ? poiLines(context.safeAttractions())
+            : candidatePoiLines(context.safeAttractions());
         return """
             城市：%s
             - 景点候选：%s
@@ -89,19 +117,19 @@ public final class TripPlannerPrompts {
             - 天气预报：%s
             """.formatted(
             context.city(),
-            poiLines(context.safeAttractions()),
-            poiLines(context.safeHotels()),
-            poiLines(context.safeRestaurants()),
+            attractions,
+            candidatePoiLines(context.safeHotels()),
+            candidatePoiLines(context.safeRestaurants()),
             weatherLines(context.safeWeatherForecasts())
         );
     }
 
+    /** 把传入的 POI 全部转换为 Planner 可读文本，不在这里静默丢弃数据。 */
     private static String poiLines(List<MapPoi> pois) {
         if (pois == null || pois.isEmpty()) {
             return "无";
         }
         return pois.stream()
-            .limit(5)
             .map(poi -> "%s（%s，%s，评分%s，经纬度%s）".formatted(
                 safe(poi.name()),
                 safe(poi.address()),
@@ -110,6 +138,14 @@ public final class TripPlannerPrompts {
                 poi.location() == null ? "未知" : poi.location().longitude() + "," + poi.location().latitude()
             ))
             .collect(Collectors.joining("；"));
+    }
+
+    /** 自主规划及酒店、餐饮推荐只需要少量候选，避免无关 POI 占用过多上下文。 */
+    private static String candidatePoiLines(List<MapPoi> pois) {
+        if (pois == null || pois.isEmpty()) {
+            return "无";
+        }
+        return poiLines(pois.stream().limit(MAX_CANDIDATE_POIS).toList());
     }
 
     private static String weatherLines(List<MapWeatherForecast> forecasts) {
@@ -130,13 +166,16 @@ public final class TripPlannerPrompts {
             .collect(Collectors.joining("；"));
     }
 
-    private static String contentContextBlock(ContentPlanningContext context) {
+    private static String contentContextBlock(
+        ContentPlanningContext context,
+        boolean includeAllAttractions
+    ) {
         if (context == null || !context.realData() || context.safeCities().isEmpty()) {
             String message = context == null ? "没有游记内容上下文。" : context.message();
             return "- 数据源：" + safe(context == null ? "" : context.source()) + "\n- 状态：" + safe(message);
         }
         return context.safeCities().stream()
-            .map(TripPlannerPrompts::contentCityBlock)
+            .map(city -> contentCityBlock(city, includeAllAttractions))
             .collect(Collectors.joining("\n\n"));
     }
 
@@ -157,7 +196,7 @@ public final class TripPlannerPrompts {
     }
 
     private static String xhsAttractionCityBlock(ContentCityContext context) {
-        String candidates = contentCandidateLines(context.safeAttractions());
+        String candidates = contentCandidateLines(context.safeAttractions(), false);
         return """
             城市：%s
             小红书候选景点：%s
@@ -167,11 +206,14 @@ public final class TripPlannerPrompts {
         );
     }
 
-    private static String contentCityBlock(ContentCityContext context) {
-        String candidates = contentCandidateLines(context.safeAttractions());
+    private static String contentCityBlock(
+        ContentCityContext context,
+        boolean includeAllAttractions
+    ) {
+        String candidates = contentCandidateLines(context.safeAttractions(), includeAllAttractions);
         String raw = context.rawText() == null || context.rawText().isBlank()
             ? "无"
-            : truncate(context.rawText(), 2200);
+            : includeAllAttractions ? context.rawText() : truncate(context.rawText(), 2200);
         return """
             城市：%s
             - 搜索关键词：%s
@@ -186,12 +228,17 @@ public final class TripPlannerPrompts {
         );
     }
 
-    private static String contentCandidateLines(List<ContentAttractionCandidate> candidates) {
+    private static String contentCandidateLines(
+        List<ContentAttractionCandidate> candidates,
+        boolean includeAllAttractions
+    ) {
         if (candidates == null || candidates.isEmpty()) {
             return "无";
         }
-        return candidates.stream()
-            .limit(8)
+        List<ContentAttractionCandidate> visibleCandidates = includeAllAttractions
+            ? candidates
+            : candidates.stream().limit(8).toList();
+        return visibleCandidates.stream()
             .map(item -> "%s（中文名%s，英文名%s，建议%s分钟，预约%s，提示：%s，理由：%s）".formatted(
                 safe(item.name()),
                 safe(item.name_zh()),

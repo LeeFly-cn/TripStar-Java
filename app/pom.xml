@@ -64,6 +64,11 @@
             <artifactId>content</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>com.zkry</groupId>
+            <artifactId>map</artifactId>
+            <version>${project.version}</version>
+        </dependency>
 
         <!-- MySQL 运行时驱动，对应 application-dev.yml 中的数据源配置。 -->
         <dependency>

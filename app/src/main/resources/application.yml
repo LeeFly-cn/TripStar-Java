@@ -12,10 +12,10 @@ spring:
   ai:
     dashscope:
       enabled: ${AI_DASHSCOPE_ENABLED:true}
-      api-key: ${AI_DASHSCOPE_API_KEY:}
+      api-key: ${AI_DASHSCOPE_API_KEY:sk-ws-H.RXIEDIM.sbNt.MEQCIHM4Yd-RpzdTYCvoX7O6irqYhoVEA5Hd0_AV4SgbyrreAiBnf_aSJTfO5HmKfAe-L-ExdtHgAz_LFYamocyR1yTzJA}
       chat:
         options:
-          model: ${AI_DASHSCOPE_CHAT_MODEL:qwen-plus}
+          model: ${AI_DASHSCOPE_CHAT_MODEL:qwen3.7-plus}  #设计图片理解 需要使用多模态模型
   data:
     redis:
       timeout: 10s
@@ -35,8 +35,12 @@ tripstar:
   map:
     amap:
       enabled: ${AMAP_ENABLED:true}
-      key: ${AMAP_KEY:}
+      key: ${AMAP_KEY:61efbe8221fcd2ecea8e83963e463597}
       base-url: ${AMAP_BASE_URL:https://restapi.amap.com}
+      # 指定笔记结果页的图片补查配置。前端限流之外，后端再限制所有用户合计并发。
+      photo-max-concurrency: ${AMAP_PHOTO_MAX_CONCURRENCY:3}
+      photo-cache-hours: ${AMAP_PHOTO_CACHE_HOURS:6}
+      photo-acquire-timeout-ms: ${AMAP_PHOTO_ACQUIRE_TIMEOUT_MS:5000}
   content:
     xhs:
       enabled: ${XHS_ENABLED:true}
@@ -48,6 +52,10 @@ tripstar:
       sign-dir: ${XHS_SIGN_DIR:classpath:xhs_sign}
       node-command: ${XHS_NODE_COMMAND:node}
       max-notes: ${XHS_MAX_NOTES:4}
+      # 指定笔记模式下载的图片放在项目根目录，按 taskId 建立子目录，方便本地排查。
+      note-image-dir: ${XHS_NOTE_IMAGE_DIR:./temp/xhs-note-images}
+      # 本地学习默认保留图片，使 AI trace 中的 path 可直接查看；生产环境建议设置为 true。
+      note-image-cleanup-enabled: ${XHS_NOTE_IMAGE_CLEANUP_ENABLED:false}
 
 ############## Sa-Token 配置 (文档: https://sa-token.cc) ##############
 sa-token:

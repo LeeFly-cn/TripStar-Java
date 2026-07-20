@@ -11,6 +11,9 @@ public enum TripstarAgent {
     XHS_EXTRACTION("xhs-extraction-agent"),
     XHS_SEARCH("xhs-search-agent"),
     XHS_DETAIL("xhs-detail-agent"),
+    // 指定笔记模式：多模态理解不调用 Tool；POI 由 Service 补全，酒店餐饮仍由 Agent 决策。
+    XHS_NOTE_UNDERSTANDING("xhs-note-understanding-agent"),
+    XHS_NOTE_HOTEL_FOOD("xhs-note-hotel-food-agent"),
     AMAP_POI_RESEARCH("amap-poi-research-agent"),
     AMAP_WEATHER_RESEARCH("amap-weather-research-agent"),
     AMAP_HOTEL_RESEARCH("amap-hotel-research-agent"),

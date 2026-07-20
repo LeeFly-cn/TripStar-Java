@@ -254,11 +254,16 @@ structuredOutputService.callForObject(...)
 现在主要结构化 DTO 是：
 
 ```text
+XhsSearchResearchResult
+XhsDetailResearchResult
+MapAgentResult
 TravelResearchResult
 TripPlan
 ReviewResult
 List<ContentAttractionCandidate>
 ```
+
+研究阶段没有继续共用一个大 DTO：小红书搜索、详情和地图 Agent 分别使用自己的输出类型。`TravelResearchResult` 只由 Graph 最终合并节点创建，用来交给后续 Planner，不直接作为阶段 Agent 的输出。
 
 如果模型输出不能转换成 DTO，`AiStructuredOutputService` 会记录 `[AI-STRUCTURED] 结构化输出解析失败`，上层返回明确失败。后续如果真要增加修复链路，建议单独设计成可观测、可测试的功能，而不是保留未使用代码。
 

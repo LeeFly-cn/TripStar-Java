@@ -22,6 +22,14 @@ public final class TripstarPromptVariable {
     public static final String XHS_SEARCH_RESULTS = "xhs_search_results";
     public static final String XHS_ATTRACTIONS = "xhs_attractions";
 
+    // 指定笔记多模态理解与地图研究提示词使用的模板变量。
+    public static final String START_DATE = "start_date";
+    public static final String XHS_NOTE_TEXT = "xhs_note_text";
+    public static final String XHS_NOTE_REQUIREMENT = "xhs_note_requirement";
+    public static final String ROUTE_ANCHORS = "route_anchors";
+    public static final String MISSING_HOTEL = "missing_hotel";
+    public static final String MISSING_MEALS = "missing_meals";
+
     private TripstarPromptVariable() {
     }
 }

@@ -14,6 +14,7 @@ final class XhsNoteJsons {
     private XhsNoteJsons() {
     }
 
+    /** 兼容搜索结果中多种 noteId 字段路径。 */
     static String noteId(JsonNode item) {
         JsonNode noteCard = item == null ? null : item.path("note_card");
         return firstText(
@@ -26,6 +27,7 @@ final class XhsNoteJsons {
         );
     }
 
+    /** 兼容搜索结果中多种 xsecToken 字段路径。 */
     static String xsecToken(JsonNode item) {
         JsonNode noteCard = item == null ? null : item.path("note_card");
         return firstText(
@@ -36,6 +38,7 @@ final class XhsNoteJsons {
         );
     }
 
+    /** 兼容卡片标题在不同 Web 版本中的字段名。 */
     static String title(JsonNode noteCard) {
         return firstText(
             noteCard == null ? null : noteCard.path("display_title"),
@@ -44,6 +47,7 @@ final class XhsNoteJsons {
         );
     }
 
+    /** 返回候选 JSON 节点中第一个非空文本值。 */
     private static String firstText(JsonNode... nodes) {
         if (nodes == null) {
             return "";

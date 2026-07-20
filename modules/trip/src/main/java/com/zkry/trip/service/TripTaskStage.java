@@ -14,6 +14,12 @@ public final class TripTaskStage {
     public static final String ATTRACTION_SEARCH = "attraction_search";
     public static final String XHS_SEARCH = "xhs_search";
     public static final String XHS_DETAIL = "xhs_detail";
+
+    // 指定笔记模式新增三个可观察阶段，前端仍把它们显示在“景点资料研究”大步骤内。
+    public static final String XHS_NOTE_RESOLVE = "xhs_note_resolve";
+    public static final String XHS_NOTE_IMAGE = "xhs_note_image";
+    public static final String XHS_NOTE_UNDERSTANDING = "xhs_note_understanding";
+
     public static final String AMAP_POI_SEARCH = "amap_poi_search";
     public static final String WEATHER_SEARCH = "weather_search";
     public static final String HOTEL_SEARCH = "hotel_search";

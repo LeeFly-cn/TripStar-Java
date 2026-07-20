@@ -20,6 +20,7 @@ public class TripstarRuntimeSettingsService {
     ) {
         settings.put(TripstarSettingKeys.AMAP_WEB_KEY, emptyToDefault(amapWebKey));
         settings.put(TripstarSettingKeys.AMAP_WEB_JS_KEY, "");
+        settings.put(TripstarSettingKeys.AMAP_SECURITY_JS_CODE, "");
         settings.put(TripstarSettingKeys.GOOGLE_MAPS_API_KEY, "");
         settings.put(TripstarSettingKeys.GOOGLE_MAPS_PROXY, "");
         settings.put(TripstarSettingKeys.XHS_COOKIE, emptyToDefault(xhsCookie));

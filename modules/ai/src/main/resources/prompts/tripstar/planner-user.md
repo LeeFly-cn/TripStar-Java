@@ -33,4 +33,5 @@
 8. 如果地图上下文里有 POI、酒店、餐饮、天气，请优先使用其中的真实名称、地址和经纬度；数量不足时再由你补齐。
 9. 景点顺序要按同城就近、少走回头路的原则安排；移动日行程要轻。
 10. 如果小红书游记上下文里有景点候选、预约提醒、避坑建议，请优先吸收进 attractions.description，并保留 reservation_required / reservation_tips 含义。
+11. attractions[].image_url 必须填写空字符串，图片由 Java 和前端从真实数据源补充，禁止编造 example.com 或其他图片地址。
 

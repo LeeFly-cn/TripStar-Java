@@ -1,225 +1,123 @@
 <div align="center">
-  <h1>旅途星辰 Java 实现版 - TripStar Java</h1>
-  <p><strong>基于 Spring Boot 4 + Spring AI Alibaba 重写 TripStar 后端的 AI 旅行规划项目</strong></p>
+  <h1>TripStar</h1>
+  <p><strong>基于 Spring Boot 4 与 Spring AI Alibaba 的多智能体旅行规划系统</strong></p>
 </div>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/license-GPL--2.0-orange">
-  <img src="https://img.shields.io/badge/java-21-blue.svg">
-  <img src="https://img.shields.io/badge/Spring%20Boot-4.0.7-brightgreen.svg">
-  <img src="https://img.shields.io/badge/Spring%20AI%20Alibaba-2.0.0--M1.1-teal.svg">
-  <img src="https://img.shields.io/badge/Frontend-Vue%203.x-brightgreen.svg">
+  <img src="https://img.shields.io/badge/license-GPL--2.0-orange" alt="GPL-2.0">
+  <img src="https://img.shields.io/badge/Java-21-blue" alt="Java 21">
+  <img src="https://img.shields.io/badge/Spring%20Boot-4.0.7-brightgreen" alt="Spring Boot 4.0.7">
+  <img src="https://img.shields.io/badge/Spring%20AI%20Alibaba-2.0.0--M1.1-teal" alt="Spring AI Alibaba">
+  <img src="https://img.shields.io/badge/Workflow-StateGraph-5b8ff9" alt="StateGraph">
 </p>
 
-> [!IMPORTANT]
->
-> 本项目是 [1sdv/TripStar](https://github.com/1sdv/TripStar) 的 Java 后端学习实现版。产品形态、前端交互、旅行规划思路参考原 TripStar；后端使用 Java 21、Spring Boot 4、Spring AI Alibaba、ReactAgent、Structured Output 和 Spring AI Tool 重新实现。
->
-> 前端可以继续使用原 TripStar 的 Vue 项目：下载原仓库的 `frontend` 目录，把接口地址指向本 Java 后端即可。
+TripStar 是一个前后端分离的 AI 旅行规划项目。系统使用多 Agent 协作理解用户需求，读取小红书旅行内容，查询高德 POI、天气、酒店与餐饮，并生成包含每日路线、地图、景点图片、预算和知识图谱的完整攻略。
 
-## 项目简介
+- 后端 GitHub：[LeeFly-cn/TripStar-Java](https://github.com/LeeFly-cn/TripStar-Java)
+- 后端 Gitee：[haigoya_admin/trip-star-java](https://gitee.com/haigoya_admin/trip-star-java)
+- 前端 GitHub：[LeeFly-cn/TripStar-Frontend](https://github.com/LeeFly-cn/TripStar-Frontend)
+- 社区：[LinuxDo](https://linux.do/)
 
-**旅途星辰 Java 实现版 (TripStar Java)** 是一个面向学习和二次开发的 AI 旅行规划后端。它保留原 TripStar “输入城市、天数、偏好和备注，自动生成旅行攻略”的使用体验，并重点演示如何在 Java 技术栈里落地 Agent 应用。
+## 核心能力
 
-这个版本的核心目标不是简单把 Python 代码逐行翻译成 Java，而是把 TripStar 的能力拆成更适合 Java 工程学习的模块：
+### 1. 自主规划
 
-- 用 Spring AI Alibaba `StateGraph` 编排资料研究阶段，并用 `ReactAgent` 让大模型主动调用高德和小红书工具。
-- 用 Spring AI `BeanOutputConverter` 做结构化输出，减少手写 JSON 修复逻辑。
-- 用小红书真实游记内容辅助 LLM 提炼景点、避坑建议、预约提醒和用户口吻偏好。
-- 用高德地图工具查询 POI、酒店、餐饮、天气和坐标信息。
-- 保持与原 Vue 前端相近的接口和 WebSocket 进度推送体验。
+输入目的地、日期、交通方式、住宿偏好和自然语言要求，系统按以下顺序执行：
 
-适合的学习方向：
+1. 小红书搜索 Agent 查找真实旅行笔记。
+2. 小红书详情 Agent 读取正文并提炼景点、避坑和预约信息。
+3. 高德 POI Agent 校准名称、地址和经纬度。
+4. 天气 Agent 查询旅行天气。
+5. 酒店餐饮 Agent 查询住宿与三餐候选。
+6. Planner Agent 生成每日行程和预算。
+7. Review Agent 检查结构与明显数据矛盾。
 
-- Spring AI Alibaba / Spring AI Tool 调用
-- ReactAgent 旅行推荐场景实践
-- LLM 结构化输出和 DTO 落地
-- 小红书内容采集、提炼和旅游推荐结合
-- 高德地图 POI、天气、酒店、餐饮工具封装
-- 前后端分离的长任务进度推送
+### 2. 指定笔记规划
 
-## 与原 TripStar 的关系
+用户可以输入一个或多个小红书长链接、短链、App 分享内容，或者直接粘贴攻略正文。系统会：
 
-原项目地址：[https://github.com/1sdv/TripStar](https://github.com/1sdv/TripStar)
+1. 解析公开笔记正文和全部图片。
+2. 使用多模态模型识别图片中的 Day01、Day02、路线、酒店、餐厅和交通信息。
+3. 按笔记原始顺序保留全部景点，不套用自主规划的每日数量限制。
+4. 使用高德 Service 逐项补全 POI、地址、坐标、评分与图片。
+5. 仅在笔记缺少酒店或餐饮时调用补充 Agent。
+6. 使用独立 Planner 与 Review Prompt 生成并检查最终攻略。
+7. Java 严格校验笔记景点是否全部进入最终行程，缺失时直接列出名称并终止任务。
 
-原 TripStar 是一个基于 Python FastAPI、HelloAgents、多智能体和 Vue 前端的 AI 文旅规划平台。本仓库的定位是：
+### 3. 可观测的 Agent 工作流
 
-- **后端 Java 化**：使用 Spring Boot 4 多模块工程重写后端主流程。
-- **Agent 学习化**：突出 Spring AI Alibaba `StateGraph`、`ReactAgent`、工具调用、结构化输出和 Prompt 管理。
-- **前端兼容化**：尽量保留原 Vue 前端需要的 `/api/trip/plan`、`/api/trip/status/{taskId}`、`/api/trip/ws/{taskId}` 等接口形态。
-- **数据真实化**：小红书和高德未配置时直接提示缺配置，不再用模拟数据假装成功。
+- Spring AI Alibaba `StateGraph` 控制自主规划研究阶段的执行顺序和条件边。
+- `ReactAgent` 负责阶段内的工具调用与参数决策。
+- 每个 Agent 使用职责明确的小型 DTO，不共享包含大量无关字段的通用输出对象。
+- Spring AI `BeanOutputConverter` 将模型 JSON 转换为 Java Record。
+- 系统提示词、用户提示词、工具列表和模型原始输出写入 AI Trace 文件。
+- WebSocket 实时推送当前阶段、进度和错误信息。
 
-如果你要运行完整前端效果，可以直接复用原项目的 Vue 前端：
+### 4. 真实数据链路
 
-```bash
-git clone https://github.com/1sdv/TripStar.git
-cd TripStar/frontend
-npm install
-npm run dev
-```
-
-然后把前端请求地址配置为 Java 后端地址，例如 `http://localhost:8080`。
-
-## 核心亮点
-
-- **Java 服务端改写**：后端基于 Java 21、Spring Boot 4 和 Maven 多模块组织，方便 Java 开发者学习和二开。
-- **Spring AI Alibaba Graph + ReactAgent**：资料研究阶段由 `StateGraph` 控制顺序，阶段内部由 Agent 自主调用高德 Tool 和小红书 Tool。
-- **小红书双形态接入**：支持 `service`、`tool`、`both` 三种模式，既能对标 Python 版确定性采集，也能学习 Agent 调工具。
-- **高德工具化**：POI、酒店、餐饮、天气、坐标查询都封装为 Tool，交给资料研究智能体按用户需求调用。
-- **Structured Output**：规划、研究、质检等 LLM 输出使用 Spring AI 结构化输出转 DTO，代码比手写 JSON 提取更易读。
-- **Prompt 资源化管理**：较长提示词统一放在 `modules/ai/src/main/resources/prompts/tripstar/`，避免硬编码散落在业务代码里。
-- **AI Trace 调试文件**：每次 Agent 调用会落盘系统提示词、用户提示词和模型原始输出，方便排查 Prompt、工具返回和结构化输出问题。
-- **WebSocket 进度推送**：长耗时规划任务先返回 `task_id`，前端通过轮询或 WebSocket 获取进度。
-- **知识图谱输出**：后端根据行程结果生成 `nodes` 和 `edges`，供 Vue 前端用 ECharts 展示城市、天数、景点、预算之间的关系。
-
-## 示例场景
-
-用户只需要输入类似下面的信息：
-
-> 我带老人去昆明玩 3 天，不想太累，不想看滇池，住得方便一点，喜欢自然风光和本地美食。
-
-Java 后端会按下面思路处理：
-
-1. 读取用户城市、天数、偏好、住宿和自由备注。
-2. 资料研究智能体调用小红书工具，搜索真实游记并提炼候选景点、避坑点和预约提醒。
-3. 资料研究智能体调用高德工具，查询 POI、酒店、餐饮、天气和坐标。
-4. 规划智能体合并用户约束和真实上下文，生成每日行程、预算、交通建议、住宿建议和备注。
-5. 质检智能体检查是否违背用户要求，例如“不想看滇池”就不应把滇池安排进行程。
-6. 后端补充知识图谱数据，前端展示路线、日程卡片、预算和图谱。
-
-示例请求：
-
-```json
-{
-  "city": "昆明",
-  "cities": [
-    {
-      "city": "昆明",
-      "days": 3
-    }
-  ],
-  "travel_days": 3,
-  "transportation": "公共交通",
-  "accommodation": "住得方便一点",
-  "preferences": ["自然风光", "美食", "轻松"],
-  "free_text_input": "带老人，不想太累，不想看滇池",
-  "language": "zh"
-}
-```
-
-提交接口：
-
-```bash
-curl -X POST http://localhost:8080/api/trip/plan \
-  -H "Content-Type: application/json" \
-  -d '{"city":"昆明","travel_days":3,"transportation":"公共交通","accommodation":"住得方便一点","preferences":["自然风光","美食","轻松"],"free_text_input":"带老人，不想太累，不想看滇池","language":"zh"}'
-```
-
-返回示例：
-
-```json
-{
-  "task_id": "192aa4c1",
-  "status_url": "/api/trip/status/192aa4c1",
-  "ws_url": "/api/trip/ws/192aa4c1"
-}
-```
-
-查询进度：
-
-```bash
-curl http://localhost:8080/api/trip/status/192aa4c1
-```
+- 小红书支持 `service`、`tool`、`both` 三种运行模式。
+- 高德提供地理编码、POI、天气、酒店、餐饮和图片数据。
+- 餐饮与酒店查询使用高德类型过滤，避免景区或商场进入错误数据类别。
+- 未配置密钥、Cookie 或工具调用失败时明确报错，不返回模拟数据。
 
 ## 系统架构
 
-### 资料研究 Workflow Graph
+```mermaid
+flowchart LR
+    WEB[TripStar Frontend] --> API[Spring Boot API]
+    API --> TASK[TripTaskService]
 
-`TripResearchService` 使用 Spring AI Alibaba `StateGraph` 编排资料研究。小红书 `service/tool/both` 不是在节点内部偷偷跳过，而是由 Graph 条件边决定路线：
+    TASK --> AUTO[自主规划 Workflow]
+    TASK --> NOTE[指定笔记 Workflow]
+
+    AUTO --> XHS[XHS Search / Detail Agents]
+    XHS --> GRAPH[Spring AI Alibaba StateGraph]
+    GRAPH --> AMAP[AMap POI / Weather / Hotel Agents]
+
+    NOTE --> READER[Note Reader + Image Downloader]
+    READER --> VISION[Multimodal Understanding Agent]
+    VISION --> POI[POI Enrichment Service]
+    POI --> SUPPLEMENT[Weather + Conditional Hotel/Food Agents]
+
+    AMAP --> PLANNER[Planner Agent]
+    SUPPLEMENT --> PLANNER
+    PLANNER --> REVIEW[Review Agent]
+    REVIEW --> RESULT[Trip Plan + Knowledge Graph]
+    RESULT --> WEB
+```
+
+### 自主规划 StateGraph
 
 ```mermaid
 flowchart TD
-    START([START]) --> ROUTE[xhs_mode_route]
-    ROUTE -- service --> XHS_SERVICE[xhs_service_optional]
-    ROUTE -- tool --> XHS_SEARCH[xhs_search_agent]
-    ROUTE -- both --> XHS_SERVICE
-    XHS_SERVICE -- service_ready --> XHS_READY[xhs_ready_check]
-    XHS_SERVICE -- service_then_tool --> XHS_SEARCH
-    XHS_SEARCH --> XHS_DETAIL[xhs_detail_agent]
-    XHS_DETAIL --> XHS_READY
-    XHS_READY --> AMAP_POI[amap_poi_agent]
-    AMAP_POI --> WEATHER[amap_weather_agent]
-    WEATHER --> HOTEL[amap_hotel_agent]
-    HOTEL --> MERGE[merge_research_context]
+    START([START]) --> MODE{xhs_mode}
+    MODE -- service --> SERVICE[XHS Service]
+    MODE -- tool --> SEARCH[XHS Search Agent]
+    MODE -- both --> SERVICE
+    SERVICE -- service --> READY[XHS Ready Check]
+    SERVICE -- continue tool --> SEARCH
+    SEARCH --> DETAIL[XHS Detail Agent]
+    DETAIL --> READY
+    READY --> POI[AMap POI Agent]
+    POI --> WEATHER[Weather Agent]
+    WEATHER --> HOTEL[Hotel / Restaurant Agent]
+    HOTEL --> MERGE[Merge Research Context]
     MERGE --> END([END])
 ```
 
-每个 Agent 只拿当前阶段的工具白名单：小红书搜索只拿 `xhs_search_notes`，小红书详情只拿 `xhs_note_detail`，高德 POI、天气、酒店餐饮也分别只拿自己的工具。
+## Agent 与输出契约
 
-```mermaid
-sequenceDiagram
-    autonumber
+| 阶段 | Agent / Service | 结构化输出 |
+| --- | --- | --- |
+| 小红书搜索 | `XhsSearchAgent` | `XhsSearchResearchResult` |
+| 小红书详情 | `XhsDetailAgent` | `XhsDetailResearchResult` |
+| 高德研究 | POI / Weather / Hotel Agents | `MapAgentResult` |
+| 指定笔记理解 | Multimodal Understanding Agent | `XhsNoteUnderstandingResult` |
+| 最终规划 | `TripPlannerAgent` | `TripPlan` |
+| 行程质检 | `TripReviewAgent` | `ReviewResult` |
+| Graph 汇总 | Java Workflow | `TravelResearchResult` |
 
-    participant Vue as "TripStar Vue 前端"
-    participant API as "TripController"
-    participant Task as "TripTaskService"
-    participant Research as "TripResearchService"
-    participant XHSAgent as "XhsSearch/DetailAgent"
-    participant AMapAgent as "AmapPoi/Weather/HotelAgent"
-    participant XHS as "XhsSearchTools / XhsDetailTools / XhsContentService"
-    participant AMap as "Amap*Tools"
-    participant Planner as "TripAiPlannerService"
-    participant SO as "AiStructuredOutputService"
-    participant Graph as "TripPlanResponseFactory"
-
-    Vue->>API: POST /api/trip/plan
-    API->>Task: submit(request)
-    Task-->>Vue: task_id, status_url, ws_url
-    Vue->>Task: WebSocket /api/trip/ws/{taskId}
-
-    Task->>Research: research(taskId, request, progressReporter)
-    Research->>XHSAgent: 小红书搜索/详情阶段
-    XHSAgent->>XHS: xhs_search_notes / xhs_note_detail
-    XHS-->>XHSAgent: 游记正文、景点候选、图片线索
-    XHSAgent->>SO: Structured Output 转 ContentPlanningContext
-    Research->>AMapAgent: 高德 POI / 天气 / 酒店阶段
-    AMapAgent->>AMap: amap_geocode / poi / weather / hotel
-    AMap-->>AMapAgent: 地图、天气、POI 上下文
-    AMapAgent->>SO: Structured Output 转 MapPlanningContext
-    SO-->>Research: 结构化资料研究结果
-    Research-->>Task: 合并后的 MapPlanningContext + ContentPlanningContext
-
-    Task->>Planner: plan(taskId, request, mapContext, contentContext)
-    Planner->>SO: Structured Output 转 TripPlanResponse
-    SO-->>Planner: 行程 JSON 对象
-    Planner->>Graph: 补充知识图谱 nodes / edges
-    Graph-->>Task: 完整 TripPlanResponse
-    Task-->>Vue: WebSocket 推送 completed + result
-```
-
-## 模块结构
-
-```text
-backend_java/
-├── app/
-│   ├── src/main/java/com/zkry/api/trip/      # 行程接口、设置接口、WebSocket
-│   └── src/main/resources/application.yml    # Spring Boot 与 TripStar 配置
-├── common/
-│   ├── core/                                 # 通用异常、运行时配置、工具类
-│   ├── json/                                 # JSON 配置
-│   ├── redis/                                # Redis 配置
-│   ├── satoken/                              # Sa-Token 集成
-│   └── web/                                  # Web 通用配置
-├── modules/
-│   ├── ai/                                   # ReactAgent、结构化输出、Prompt 加载
-│   ├── content/                              # 小红书搜索、详情、签名、Tool
-│   ├── map/                                  # 高德 REST 调用和 Tool
-│   └── trip/                                 # 旅行规划主流程、DTO、知识图谱
-├── docs/
-│   ├── TRIPSTAR_CODE_WALKTHROUGH.md          # 代码运行链路学习文档
-│   └── TRIPSTAR_AGENT_LEARNING_GUIDE.md      # 智能体学习文档
-└── TRIPSTAR_JAVA_MIGRATION_PLAN.md           # Java 迁移计划
-```
+`TravelResearchResult` 只在 Graph 最终合并时创建，不作为单个阶段 Agent 的大而全输出 DTO。
 
 ## 技术栈
 
@@ -227,41 +125,50 @@ backend_java/
 - Spring Boot 4.0.7
 - Spring AI 2.0.0-M1
 - Spring AI Alibaba 2.0.0-M1.1
-- Spring AI Structured Output
+- Spring AI Alibaba StateGraph / ReactAgent
+- Spring AI Tool Calling / Structured Output / Multimodal Message
 - Maven 多模块
-- MyBatis-Plus
-- Sa-Token
-- Redis
-- MySQL
-- Vue 3.x 前端复用原 TripStar 项目
+- MyBatis-Plus、Sa-Token、Redis、MySQL
+- 高德 Web Service API
+- Node.js 小红书签名运行时
 
-## 环境准备
+## 模块结构
 
-后端运行需要：
+```text
+TripStar-Java/
+├── app/                         # HTTP API、WebSocket、运行配置
+├── common/
+│   ├── core/                   # 异常、常量、运行时设置
+│   ├── json/                   # JSON 配置
+│   ├── redis/                  # Redis
+│   ├── satoken/                # Sa-Token
+│   └── web/                    # Web 通用配置
+├── modules/
+│   ├── ai/                     # Agent、Structured Output、Prompt、Trace
+│   ├── content/                # 小红书搜索、详情、公开笔记与图片读取
+│   ├── map/                    # 高德 API、Tool、POI 图片代理
+│   └── trip/                   # Workflow、规划、质检、DTO、知识图谱
+├── docs/                       # 源码学习与实现文档
+├── .env.example
+└── pom.xml
+```
+
+## 环境要求
 
 - JDK 21
 - Maven 3.9+
-- Node.js 18+，用于执行小红书签名脚本
-- MySQL，脚手架默认数据源
-- Redis，脚手架默认缓存配置
-- DashScope API Key，或你自行扩展兼容的 ChatModel
-- 高德 Web 服务 Key
-- 小红书 Cookie，网页端登录后从浏览器开发者工具复制
+- Node.js 18+
+- MySQL 8+
+- Redis 6+
+- DashScope API Key
+- 高德 Web Service Key
+- 自主规划使用小红书搜索时需要有效 Cookie
 
-> 小红书接口和签名策略可能随平台变化而失效。本项目仅用于学习和个人研究，请遵守目标网站协议、法律法规和频率限制。
+指定笔记模式读取公开笔记页面时不要求用户填写 Cookie；页面触发登录或风控验证时会明确失败。
 
-## 后端配置
+## 配置
 
-复制环境变量模板：
-
-```bash
-cd backend_java
-cp .env.example .env
-```
-
-`.env.example` 只是配置模板。Spring Boot 默认不会自动读取项目根目录的 `.env` 文件，实际运行时请把这些值导出为系统环境变量、配置到 IDE 启动环境，或使用 `--KEY=value` 形式追加到启动命令。
-
-关键配置：
+参考 `.env.example` 配置 IDE、Shell 或部署平台环境变量：
 
 ```bash
 AI_DASHSCOPE_ENABLED=true
@@ -284,164 +191,158 @@ DB_PASSWORD=
 
 REDIS_HOST=localhost
 REDIS_PORT=6379
+REDIS_DATABASE=0
+REDIS_PASSWORD=
 ```
 
-小红书模式说明：
+`XHS_MODE` 可选值：
 
-```text
-service  Java service 主动采集小红书，再把结果交给规划流程。
-tool     ReactAgent 自己决定什么时候调用小红书 Tool。
-both     service 和 tool 两条链路都执行并合并上下文，适合学习对比。
-```
+| 模式 | 说明 |
+| --- | --- |
+| `service` | Java Service 按固定流程采集内容 |
+| `tool` | ReactAgent 调用小红书 Tool |
+| `both` | 两条链路都执行并合并，用于效果对比 |
 
-AI Trace 说明：
-
-```text
-logs/ai-trace/yyyy-MM-dd/*.md
-```
-
-每次 ReactAgent 调用都会写入一个 Markdown 文件，包含系统提示词、用户提示词、工具列表、模型原始输出和耗时。排查“小红书没有返回笔记”“高德酒店餐饮 realData 判断错误”“结构化输出解析失败”时，优先看对应 `threadId` 的 trace 文件。
-
-小红书签名资产已经内置在 Java content 模块：
+小红书签名资源已内置：
 
 ```text
 modules/content/src/main/resources/xhs_sign/
 ```
 
-默认 `XHS_SIGN_DIR=classpath:xhs_sign`。程序第一次生成签名时会把这几个 JS 文件抽取到临时目录，再交给 Node.js 执行。你也可以把 `XHS_SIGN_DIR` 改成一个本地绝对路径，用于调试外部签名目录。
+## 启动
 
-## 启动后端
+```bash
+git clone https://github.com/LeeFly-cn/TripStar-Java.git
+cd TripStar-Java
+mvn -DskipTests package
+java -jar app/target/app-0.0.1-SNAPSHOT.jar
+```
 
-Windows PowerShell 示例：
+Windows PowerShell：
 
 ```powershell
-cd D:\code\lifei\TripStar\backend_java
-$env:JAVA_HOME="C:\Users\welco\.jdks\azul-21.0.11"
+$env:JAVA_HOME="C:\path\to\jdk-21"
 $env:Path="$env:JAVA_HOME\bin;$env:Path"
 mvn -DskipTests package
-java -jar app\target\app-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev
+java -jar app\target\app-0.0.1-SNAPSHOT.jar
 ```
 
-通用命令：
+默认地址：`http://localhost:8080`
+
+## 启动前端
 
 ```bash
-cd backend_java
-mvn -DskipTests package
-java -jar app/target/app-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev
-```
-
-健康检查：
-
-```bash
-curl http://localhost:8080/health
-```
-
-## 前端复用方式
-
-本仓库重点是 Java 后端。如果你想使用完整页面，可以直接下载原 TripStar 的 Vue 前端：
-
-```bash
-git clone https://github.com/1sdv/TripStar.git
-cd TripStar/frontend
+git clone https://github.com/LeeFly-cn/TripStar-Frontend.git
+cd TripStar-Frontend
+cp .env.example .env
 npm install
-```
-
-在前端环境变量里把 API 地址改成 Java 后端：
-
-```bash
-VITE_API_BASE_URL=http://localhost:8080
-```
-
-如果前端仍保留高德 JS API 配置，也需要填写原前端要求的高德 Web 端 JS Key 和安全密钥。
-
-```bash
 npm run dev
 ```
 
-## 主要接口
+前端默认地址：`http://localhost:5173`
+
+## API
 
 | 接口 | 方法 | 说明 |
 | --- | --- | --- |
 | `/health` | GET | 健康检查 |
-| `/api/settings` | GET | 读取运行时配置快照 |
-| `/api/settings` | PUT | 保存前端配置页提交的运行时配置 |
-| `/api/trip/plan` | POST | 提交旅行规划任务 |
-| `/api/trip/status/{taskId}` | GET | 查询任务进度和结果 |
-| `/api/trip/ws/{taskId}` | WebSocket | 订阅任务进度 |
-| `/api/poi/photo` | GET | 按景点名称查询图片线索 |
-| `/api/chat/ask` | POST | 基于行程上下文的问答入口 |
+| `/api/settings` | GET / PUT | 读取或更新运行时设置 |
+| `/api/trip/plan` | POST | 提交自主规划任务 |
+| `/api/trip/plan/xhs-notes` | POST | 提交指定笔记规划任务 |
+| `/api/trip/status/{taskId}` | GET | 查询任务状态与结果 |
+| `/api/trip/ws/{taskId}` | WebSocket | 订阅实时进度 |
+| `/api/trip/history` | GET | 查询当前运行实例的任务历史 |
+| `/api/poi/photo` | GET | 查询小红书景点图片 |
+| `/api/poi/photo/amap` | GET | 查询高德 POI 图片 |
+| `/api/poi/photo/amap/proxy` | GET | 代理高德图片用于展示与导出 |
+| `/api/chat/ask` | POST | 基于当前行程继续问答 |
 
-## 学习代码推荐路线
+### 自主规划请求
 
-建议按下面顺序阅读：
+```json
+{
+  "city": "昆明",
+  "cities": [{ "city": "昆明", "days": 3 }],
+  "start_date": "2026-08-01",
+  "end_date": "2026-08-03",
+  "travel_days": 3,
+  "transportation": "公共交通",
+  "accommodation": "交通方便的舒适型酒店",
+  "preferences": ["自然风光", "本地美食"],
+  "free_text_input": "带老人，不想太累，不去滇池",
+  "language": "zh"
+}
+```
 
-1. `app/src/main/java/com/zkry/api/trip/TripController.java`：看前端请求如何进入后端。
-2. `modules/trip/src/main/java/com/zkry/trip/service/TripTaskService.java`：看异步任务、进度状态和 WebSocket 推送。
-3. `modules/trip/src/main/java/com/zkry/trip/service/TripResearchService.java`：看 `StateGraph` 如何编排小红书、高德和合并节点。
-4. `modules/map/src/main/java/com/zkry/map/service/AmapGeoPoiTools.java` / `AmapWeatherTools.java` / `AmapHotelTools.java`：看高德阶段工具白名单。
-5. `modules/content/src/main/java/com/zkry/content/service/XhsSearchTools.java` / `XhsDetailTools.java`：看小红书阶段工具白名单。
-6. `modules/ai/src/main/java/com/zkry/ai/service/AiAgentService.java`：看 ReactAgent 的统一调用入口。
-7. `modules/ai/src/main/java/com/zkry/ai/service/AiPromptTraceService.java`：看 Agent 提示词和原始输出如何落盘。
-8. `modules/ai/src/main/java/com/zkry/ai/service/AiStructuredOutputService.java`：看 Structured Output 如何把 LLM 输出转 DTO。
-9. `modules/trip/src/main/java/com/zkry/trip/service/TripAiPlannerService.java`：看最终路线规划和质检如何执行。
-10. `modules/trip/src/main/java/com/zkry/trip/service/TripPlanResponseFactory.java`：看知识图谱结果结构如何组装。
+### 指定笔记请求
 
-配套文档：
+```json
+{
+  "share_text": "小红书分享内容、长链接或短链，可填写多个",
+  "note_content": "也可以直接粘贴攻略正文",
+  "requirement": "不去滇池，保留笔记中的全部景点",
+  "start_date": "2026-08-01"
+}
+```
 
-- [代码学习导读](docs/TRIPSTAR_CODE_WALKTHROUGH.md)
-- [智能体学习导读](docs/TRIPSTAR_AGENT_LEARNING_GUIDE.md)
-- [Java 迁移计划](TRIPSTAR_JAVA_MIGRATION_PLAN.md)
+两个接口都会立即返回 `task_id`，后续通过状态接口或 WebSocket 获取进度和最终结果。
 
-## Java 版和 Python 版的关键区别
+## AI Trace
 
-| 方向 | 原 TripStar Python 版 | TripStar Java 实现版 |
-| --- | --- | --- |
-| Web 框架 | FastAPI | Spring Boot 4 |
-| Agent 框架 | HelloAgents | Spring AI Alibaba ReactAgent |
-| 工具调用 | Python service / MCP / Agent workflow | Spring AI Tool / Java service / ReactAgent |
-| 小红书 | Python service 深度集成 | Java service + Tool + both 模式 |
-| 高德/地图 | Python service 或工具 | Java Tool 交给 Agent 主动调用 |
-| 结构化输出 | Pydantic + JSON 解析修复 | Spring AI `BeanOutputConverter` |
-| Workflow | HelloAgents 编排 | Spring AI Alibaba `StateGraph` 条件边编排 |
-| 任务进度 | 异步任务 + 轮询/WebSocket | Java 异步任务 + WebSocket |
-| 学习重点 | Python Agent 工程 | Java Agent 工程、接口抽象、Prompt 资源化 |
+```text
+logs/ai-trace/yyyy-MM-dd/*.md
+```
 
-## 知识图谱说明
+每个 Trace 文件包含：
 
-前端展示的知识图谱不是外部图数据库查询结果，而是后端根据已经生成的行程 JSON 动态组装出来的关系数据。
+- Agent 名称与 threadId
+- 系统提示词
+- 用户提示词
+- 可用工具
+- 模型原始输出
+- 调用耗时与状态
 
-它通常包含：
+排查 Agent 未调用工具、Structured Output 失败、Prompt 约束冲突或数据分类错误时，优先查看对应 taskId 的 Trace。
 
-- 城市节点
-- 每日行程节点
-- 景点节点
-- 酒店、餐饮、预算、建议节点
-- 城市到天数、天数到景点、景点到预算等边关系
+## 前端能力
 
-这份图谱的作用是帮助前端更直观地展示行程结构。它来自真实规划结果，但不是 Neo4j 这类持久化图数据库。
+独立前端仓库提供：
 
-## 后续计划
+- 自主规划与指定笔记规划双入口
+- WebSocket 真实阶段进度
+- 每日行程、酒店、三餐、天气和预算
+- 高德与 Google 地图切换
+- 真实道路路线规划
+- 景点图片卡片与 `1-1 / 1-2` 路线序号
+- 知识图谱
+- 攻略图片与 PDF 导出
+- 中文、英文、日文界面
+- 运行时模型、地图和小红书配置
 
-- [x] Java 后端基础规划链路
-- [x] 小红书真实内容接入
-- [x] 高德 POI、天气、酒店、餐饮 Tool
-- [x] Spring AI Alibaba ReactAgent 调工具
-- [x] Spring AI Alibaba StateGraph Workflow 编排
-- [x] Structured Output 替代复杂手写 JSON 解析
-- [x] Prompt 资源目录统一管理
-- [x] Agent Prompt / 输出 Trace 文件
-- [x] 日志和注释增强，便于学习执行过程
-- [ ] 可直接解析小红书小红书指定笔记生成旅游计划
-- [ ] 增加自有景点数据库，实现用户级访问
-- [ ] 补充 Docker / Compose 独立部署
-- [ ] 面向用户端旅游规划产品继续扩展账号、收藏、历史行程和分享能力
+## 学习文档
 
-## 致谢
+- [代码运行导读](docs/TRIPSTAR_CODE_WALKTHROUGH.md)
+- [Agent 学习指南](docs/TRIPSTAR_AGENT_LEARNING_GUIDE.md)
+- [指定笔记规划实现指南](docs/XHS_NOTE_PLANNING_IMPLEMENTATION_GUIDE.md)
 
-本项目参考并学习了开源项目 [1sdv/TripStar](https://github.com/1sdv/TripStar) 的产品设计、前端交互和旅行规划思路。感谢原作者的开源分享。
+推荐阅读顺序：
 
-感谢 [linuxdo](https://linux.do/) 社区的交流、分享与反馈，让 TripStar Java 的迭代更高效，同时欢迎大家进群交流反馈。
+1. `TripController`
+2. `TripTaskService`
+3. `TripResearchService`
+4. `XhsNoteResearchService`
+5. `XhsNoteMapResearchService`
+6. `TripAiPlannerService`
+7. `AiAgentService`
+8. `AiStructuredOutputService`
+9. `AiPromptTraceService`
+
+## 注意事项
+
+- 小红书网页接口和签名规则可能变化，请遵守平台协议、法律法规和合理请求频率。
+- 不要提交真实 Cookie、API Key、`.env`、`runtime_settings.json`、Trace 日志或临时图片。
+- LLM 规划结果仅作为旅行建议，营业时间、票价、天气和交通信息请在出发前再次确认。
 
 ## License
 
-本项目采用 GPL-2.0 协议开源。详见 [LICENSE](LICENSE)。
+本项目使用 [GPL-2.0](LICENSE) 协议开源。
