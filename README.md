@@ -18,6 +18,47 @@ TripStar 是一个前后端分离的 AI 旅行规划项目。系统使用多 Age
 - 前端 GitHub：[LeeFly-cn/TripStar-Frontend](https://github.com/LeeFly-cn/TripStar-Frontend)
 - 社区：[LinuxDo](https://linux.do/)
 
+## 项目预览
+
+### 双模式规划入口
+
+<p align="center">
+  <a href="docs/images/planning-entry.png">
+    <img src="docs/images/planning-entry.png" alt="TripStar 自主规划与指定小红书笔记规划入口">
+  </a>
+</p>
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <strong>行程概览</strong><br>
+      <a href="docs/images/trip-overview.png">
+        <img src="docs/images/trip-overview.png" alt="TripStar 行程概览">
+      </a>
+    </td>
+    <td width="50%" align="center">
+      <strong>每日行程</strong><br>
+      <a href="docs/images/daily-itinerary.png">
+        <img src="docs/images/daily-itinerary.png" alt="TripStar 每日行程与景点图片">
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <strong>景点地图与真实路线</strong><br>
+      <a href="docs/images/route-map.png">
+        <img src="docs/images/route-map.png" alt="TripStar 景点地图与路线规划">
+      </a>
+    </td>
+    <td width="50%" align="center">
+      <strong>预算明细</strong><br>
+      <a href="docs/images/budget-details.png">
+        <img src="docs/images/budget-details.png" alt="TripStar 旅行预算明细">
+      </a>
+    </td>
+  </tr>
+</table>
+
 ## 核心能力
 
 ### 1. 自主规划
